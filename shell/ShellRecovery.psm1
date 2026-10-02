@@ -14,6 +14,15 @@ function Assert-PlainPath([string]$Path) {
     }
 }
 
+# Paths a backup may hold, relative to the config folder. Covers are the plain .png files that the
+# web UI saves in config\covers (apps.json image-path points at them); their names are URL-escaped keys.
+function Test-ArchivePath([string]$Relative) {
+    $Relative -match '^(shell\.conf|apps\.json|shell_state\.json|credentials/[a-zA-Z0-9_./-]+|covers/[a-zA-Z0-9_.~%-]+\.png)$' -and
+    $Relative.Split('/') -notcontains '..' -and $Relative.Split('/') -notcontains '.' -and -not $Relative.Contains('//') -and
+    -not $Relative.EndsWith('/') -and $Relative -notmatch '(^|/)(CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(\.|/|$)' -and
+    $Relative -notmatch '\.(/|$)'
+}
+
 function Get-ContentHash([byte[]]$Bytes) {
     [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($Bytes))
 }
@@ -109,6 +118,16 @@ function Backup-ShellConfig {
             Assert-PlainPath $item.FullName
             if (-not $item.PSIsContainer) { $paths.Add($item.FullName) }
         }
+        # Covers are optional: only plain .png files directly in the folder, other names are skipped.
+        $covers = Join-Path $root 'covers'
+        if (Test-Path -LiteralPath $covers -PathType Container) {
+            Assert-PlainPath $covers
+            foreach ($item in Get-ChildItem -LiteralPath $covers -File -Force) {
+                Assert-PlainPath $item.FullName
+                if (Test-ArchivePath ('covers/' + $item.Name)) { $paths.Add($item.FullName) }
+                else { Write-Warning "Skipped cover with an unsupported name: $($item.Name)" }
+            }
+        }
     }
     $entries = [Collections.Generic.List[object]]::new()
     $total = 0L
@@ -117,7 +136,7 @@ function Backup-ShellConfig {
         if ((Get-Item -LiteralPath $path).Length -gt 16MB) { throw 'Configuration file is too large.' }
         $bytes = [IO.File]::ReadAllBytes($path)
         $total += $bytes.Length
-        if ($total -gt 32MB -or $entries.Count -ge 1000) { throw 'Configuration backup exceeds supported size.' }
+        if ($total -gt 64MB -or $entries.Count -ge 1000) { throw 'Configuration backup exceeds supported size.' }
         $entries.Add([pscustomobject]@{
             Path = [IO.Path]::GetRelativePath($root, $path).Replace('\', '/')
             Sha256 = Get-ContentHash $bytes; Data = [Convert]::ToBase64String($bytes)
@@ -169,7 +188,7 @@ function Expand-ShellBackup {
     Assert-PlainPath $BackupPath
     Assert-PlainPath $dest
     if (Test-Path -LiteralPath $dest) { throw 'Recovery requires a new destination directory.' }
-    if ((Get-Item -LiteralPath $BackupPath).Length -gt 64MB) { throw 'Backup exceeds supported size.' }
+    if ((Get-Item -LiteralPath $BackupPath).Length -gt 128MB) { throw 'Backup exceeds supported size.' }
     $envelope = Get-Content -LiteralPath $BackupPath -Raw | ConvertFrom-Json
     if ($envelope.Format -ne 'Shell-v1') { throw 'Unsupported backup format.' }
     $payload = $null; $key = $null
@@ -197,15 +216,12 @@ function Expand-ShellBackup {
         $total = 0L
         foreach ($entry in $archive.Files) {
             $relative = [string]$entry.Path
-            if ($relative -notmatch '^(shell\.conf|apps\.json|shell_state\.json|credentials/[a-zA-Z0-9_./-]+)$' -or
-                $relative.Split('/') -contains '..' -or $relative.Split('/') -contains '.' -or $relative.Contains('//') -or
-                $relative.EndsWith('/') -or $relative -match '(^|/)(CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(\.|/|$)' -or
-                $relative -match '\.(/|$)' -or -not $seen.Add($relative)) {
+            if (-not (Test-ArchivePath $relative) -or -not $seen.Add($relative)) {
                 throw 'Unsafe or duplicate archive path.'
             }
             $bytes = [Convert]::FromBase64String($entry.Data)
             $total += $bytes.Length
-            if ($bytes.Length -gt 16MB -or $total -gt 32MB -or (Get-ContentHash $bytes) -ne $entry.Sha256) { throw 'Invalid archive contents.' }
+            if ($bytes.Length -gt 16MB -or $total -gt 64MB -or (Get-ContentHash $bytes) -ne $entry.Sha256) { throw 'Invalid archive contents.' }
             $validated.Add([pscustomobject]@{ Path = Join-Path $dest $relative; Bytes = $bytes })
         }
         $requiredFiles = if ($archive.Scope -eq 'full') {

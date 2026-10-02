@@ -147,7 +147,8 @@ The report lists the Windows version, GPUs and drivers, network adapters and lin
 version and service state, which configuration files exist, and the state of the Tailscale service if
 present. It does not record public IP addresses, host names, MAC addresses, settings or certificates.
 
-**Full backup** (settings, app list, pairing state and certificates; may need an elevated PowerShell):
+**Full backup** (settings, app list, pairing state, certificates and the cover images in
+`config\covers`; may need an elevated PowerShell):
 
 ```powershell
 .\shell\Invoke-ShellRecovery.ps1 -Action Backup -Path D:\Backups\shell.apbackup -Portable
@@ -181,7 +182,11 @@ Limits:
 
 - Configurations that point to files elsewhere (`file_apps`, `file_state`, `pkey`, `cert`,
   `credentials_file`) are rejected rather than backed up incompletely.
-- Logs, drivers, games, external scripts and firewall or router settings are not backed up.
+- Logs, the session history (`session_history.jsonl`), drivers, games, external scripts and firewall
+  or router settings are not backed up.
+- Only `.png` files directly in `config\covers` are backed up; app images elsewhere are not, and cover
+  names with characters other than letters, digits and `_ . ~ % -` are skipped with a warning.
+- A backup holds at most 1000 files and 64 MB (16 MB per file); larger configurations are rejected.
 - Avoid backups while settings are being changed; changes during the copy are detected, but the files
   are not an atomic snapshot of a running service.
 - Symbolic links and junctions are not supported.
@@ -272,7 +277,7 @@ written when a session ends, so end the stream after each run.
   delayed start, timeouts and verdict rules. Packets go to 127.0.0.1 only.
 - `Test-HermitStats.ps1` checks synthetic and real log formats and both log file names.
 - `Test-ShellRecovery.ps1` checks byte-exact restores for both encryption modes, wrong passwords,
-  tampering, path traversal, duplicates, hash mismatches, existing-file protection, settings-only
-  backups and rejected custom paths.
+  tampering, path traversal, duplicates, hash mismatches, existing-file protection, covers (and the
+  files that are left out), settings-only backups and rejected custom paths.
 - `shell/tests/clipboard_image_test.cpp` checks the clipboard image conversion, path checks and the
   file archive encoding with synthetic data (the build command is at the top of the file).

@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'ShellRecovery.psm1') -Force
 $root = Join-Path ([IO.Path]::GetTempPath()) ('Shell-test-' + [guid]::NewGuid())
 $null = New-Item -ItemType Directory -Path (Join-Path $root 'source/credentials') -Force
+$null = New-Item -ItemType Directory -Path (Join-Path $root 'source/covers') -Force
 $source = Join-Path $root 'source'
 $fixtures = @{
     'shell.conf' = "# test configuration`nencoder = nvenc"
@@ -10,8 +11,13 @@ $fixtures = @{
     'shell_state.json' = '{"test-secret":"fixture-only"}'
     'credentials/cakey.pem' = 'fixture-private-key'
     'credentials/cacert.pem' = 'fixture-certificate'
+    'covers/igdb_1234.png' = 'fixture-cover'
+    'covers/%EC%BB%A4%EB%B2%84.png' = 'fixture-escaped-cover'
     'shell.log' = 'This log must not be backed up.'
+    'session_history.jsonl' = '{"app":"fixture"}'
+    'covers/notes.txt' = 'Only .png covers are backed up.'
 }
+$excluded = @('shell.log', 'session_history.jsonl', 'covers/notes.txt')
 foreach ($name in $fixtures.Keys) { [IO.File]::WriteAllText((Join-Path $source $name), $fixtures[$name]) }
 $script:passed = 0
 function Assert-True($Condition, [string]$Label) {
@@ -36,14 +42,17 @@ foreach ($mode in @('local', 'portable')) {
     if ($mode -eq 'portable') { $argsForMode.Password = $password }
     $backup = Join-Path $root "$mode.apbackup"
     $result = Backup-ShellConfig -ConfigDirectory $source -OutputPath $backup @argsForMode
-    Assert-True ($result.Files -eq 5) "${mode}: includes configuration and credentials, excludes logs"
+    Assert-True ($result.Files -eq 7) "${mode}: includes configuration, credentials and covers, excludes logs and history"
     Assert-True (-not ([IO.File]::ReadAllText($backup).Contains('fixture-private-key'))) "${mode}: no plaintext key in envelope"
     $destination = Join-Path $root "recover-$mode"
     $recovered = Expand-ShellBackup -BackupPath $backup -Destination $destination @argsForMode
     Assert-True (-not $recovered.Activated) "${mode}: recovery never activates configuration"
-    foreach ($name in $fixtures.Keys | Where-Object { $_ -ne 'shell.log' }) {
+    foreach ($name in $fixtures.Keys | Where-Object { $_ -notin $excluded }) {
         Assert-True ((Get-FileHash -LiteralPath (Join-Path $source $name)).Hash -eq
             (Get-FileHash -LiteralPath (Join-Path $destination $name)).Hash) "${mode}: exact roundtrip for $name"
+    }
+    foreach ($name in $excluded) {
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $destination $name))) "${mode}: $name not backed up"
     }
     Assert-Rejected { Backup-ShellConfig -ConfigDirectory $source -OutputPath $backup @argsForMode } "${mode}: backup overwrite rejected"
     Assert-Rejected { Expand-ShellBackup -BackupPath $backup -Destination $source @argsForMode } "${mode}: existing recovery destination rejected"
@@ -65,7 +74,8 @@ Assert-True (-not (Test-Path -LiteralPath $failedDest)) 'modified ciphertext wri
 
 $data = [Text.Encoding]::UTF8.GetBytes('fixture')
 $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($data))
-foreach ($badPath in @('credentials/../../escaped', 'credentials/CON.txt', 'credentials/key.', 'credentials//key')) {
+foreach ($badPath in @('credentials/../../escaped', 'credentials/CON.txt', 'credentials/key.', 'credentials//key',
+        'covers/../shell.conf.png', 'covers/sub/cover.png', 'covers/cover.exe', 'covers/NUL.png')) {
     $malicious = Join-Path $root ('unsafe-' + [guid]::NewGuid() + '.apbackup')
     Write-TestArchive @(@{Path=$badPath;Data=[Convert]::ToBase64String($data);Sha256=$hash}) $malicious
     Assert-Rejected { Expand-ShellBackup -BackupPath $malicious -Destination $failedDest } "unsafe path rejected: $badPath"
