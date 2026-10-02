@@ -322,6 +322,48 @@ namespace platf::clipboard {
     return status_e::busy;
   }
 
+  namespace {
+    std::string user_object_name(HANDLE object) {
+      if (!object) {
+        return "?";
+      }
+      wchar_t name[256] = {};
+      DWORD needed = 0;
+      if (!GetUserObjectInformationW(object, UOI_NAME, name, sizeof(name) - sizeof(wchar_t), &needed)) {
+        return "?";
+      }
+      std::string out;
+      for (const wchar_t *c = name; *c; ++c) {
+        out += *c < 128 ? static_cast<char>(*c) : '?';
+      }
+      return out;
+    }
+  }  // namespace
+
+  std::string describe_for_log() {
+    std::string out = "station " + user_object_name(GetProcessWindowStation()) + ", desktop " +
+                      user_object_name(GetThreadDesktop(GetCurrentThreadId()));
+    DWORD owner_pid = 0;
+    if (HWND owner = GetClipboardOwner()) {
+      GetWindowThreadProcessId(owner, &owner_pid);
+    }
+    out += ", owner pid " + std::to_string(owner_pid) + ", " + std::to_string(CountClipboardFormats()) + " formats:";
+    if (open_with_retry()) {
+      for (UINT format = EnumClipboardFormats(0); format != 0; format = EnumClipboardFormats(format)) {
+        char name[128] = {};
+        if (format >= 0xC000 && GetClipboardFormatNameA(format, name, sizeof(name)) > 0) {
+          out += std::string(" ") + name;
+        } else {
+          out += " " + std::to_string(format);
+        }
+      }
+      CloseClipboard();
+    } else {
+      out += " (clipboard busy)";
+    }
+    return out;
+  }
+
   std::string current_type() {
     // IsClipboardFormatAvailable does not need the clipboard to be open.
     if (IsClipboardFormatAvailable(CF_UNICODETEXT)) {

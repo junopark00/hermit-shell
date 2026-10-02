@@ -67,6 +67,13 @@ namespace platf::clipboard {
   status_e snapshot(std::uint32_t &seq, std::string &type);
 
   /**
+   * @brief Shell: what this process sees on the clipboard, for the log when the type is "none":
+   * the formats listed, the clipboard owner's process id, and the window station and desktop of
+   * the calling thread.
+   */
+  std::string describe_for_log();
+
+  /**
    * @brief Clipboard text (CF_UNICODETEXT) as UTF-8.
    * @return ok (the text may still be empty), none, busy, or failed when the listed text cannot be read.
    */

@@ -2469,6 +2469,14 @@ namespace nvhttp {
         response->close_connection_after_response = true;
         return;
       }
+      if (type == "none"sv) {
+        // Shell: diagnostics for clipboard content no type matched (once per change number)
+        static std::atomic<std::uint32_t> described_seq {0};
+        if (described_seq.exchange(seq) != seq) {
+          BOOST_LOG(info) << "Clipboard info " << seq << " for [" << named_cert_p->name << "]: no text, image or files; "
+                          << platf::clipboard::describe_for_log();
+        }
+      }
       // "files=stream": type=filelist and type=filedata are available. Clients read the lines they
       // know by key, so older ones ignore it.
       response->write("seq=" + std::to_string(seq) + "\ntype=" + type + "\nfiles=stream\n");
