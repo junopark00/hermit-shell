@@ -4,9 +4,6 @@ set -e
 # Version requirements - centralized for easy maintenance
 cmake_min="3.25.0"
 target_cmake_version="3.30.1"
-doxygen_min="1.10.0"
-_doxygen_min="${doxygen_min//\./_}"  # Convert dots to underscores for URL
-doxygen_max="1.12.0"
 
 # Default value for arguments
 appimage_build=0
@@ -170,11 +167,9 @@ function add_arch_deps() {
     'base-devel'
     'cmake'
     'curl'
-    'doxygen'
     "gcc${gcc_version}"
     "gcc${gcc_version}-libs"
     'git'
-    'graphviz'
     'libayatana-appindicator'
     'libcap'
     'libdrm'
@@ -216,16 +211,12 @@ function add_debian_based_deps() {
   dependencies+=(
     "appstream"
     "appstream-util"
-    "bison"  # required if we need to compile doxygen
     "build-essential"
     "cmake"
     "desktop-file-utils"
-    "doxygen"
-    "flex"  # required if we need to compile doxygen
     "gcc-${gcc_version}"
     "g++-${gcc_version}"
     "git"
-    "graphviz"
     "libcap-dev"  # KMS
     "libcurl4-openssl-dev"
     "libdrm-dev"  # KMS
@@ -287,11 +278,9 @@ function add_fedora_deps() {
     "appstream"
     "cmake"
     "desktop-file-utils"
-    "doxygen"
     "gcc${gcc_version}"
     "gcc${gcc_version}-c++"
     "git"
-    "graphviz"
     "libappindicator-gtk3-devel"
     "libappstream-glib"
     "libcap-devel"
@@ -482,26 +471,6 @@ function run_step_deps() {
     cmake --version
   fi
 
-  # compile doxygen if version is too low
-  if ! check_version "doxygen" "$doxygen_min" "$doxygen_max"; then
-    if [ "${SHELL_COMPILE_DOXYGEN}" == "true" ]; then
-      echo "Compiling doxygen"
-      doxygen_url="https://github.com/doxygen/doxygen/releases/download/Release_${_doxygen_min}/doxygen-${doxygen_min}.src.tar.gz"
-      echo "doxygen url: ${doxygen_url}"
-      pushd "${build_dir}"
-        wget "$doxygen_url" --progress=bar:force:noscroll -q --show-progress -O "doxygen.tar.gz"
-        tar -xzf "doxygen.tar.gz"
-        cd "doxygen-${doxygen_min}"
-        cmake -DCMAKE_BUILD_TYPE=Release -G="Ninja" -B="build" -S="."
-        ninja -C "build" -j"${num_processors}"
-        ${sudo_cmd} ninja -C "build" install
-      popd
-    else
-      echo "Doxygen version not in range, skipping docs"
-      # Note: cmake_args will be set in cmake step
-    fi
-  fi
-
   # install node from nvm
   if [ "$nvm_node" == 1 ]; then
     nvm_url="https://raw.githubusercontent.com/nvm-sh/nvm/master/install.sh"
@@ -560,13 +529,6 @@ function run_step_cmake() {
   fi
   if [ -n "$publisher_issue_url" ]; then
     cmake_args+=("-DSHELL_PUBLISHER_ISSUE_URL='${publisher_issue_url}'")
-  fi
-
-  # Handle doxygen docs flag
-  if ! check_version "doxygen" "$doxygen_min" "$doxygen_max"; then
-    if [ "${SHELL_COMPILE_DOXYGEN}" != "true" ]; then
-      cmake_args+=("-DBUILD_DOCS=OFF")
-    fi
   fi
 
   # Handle CUDA

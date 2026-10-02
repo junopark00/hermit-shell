@@ -102,7 +102,6 @@ Submodules (see .gitmodules)
     libhdr10plus under the Apache License 2.0. See https://ffmpeg.org/legal.html.
 
   googletest - Copyright 2008 Google Inc. - BSD 3-Clause License (tests only)
-  doxyconfig - LizardByte - GNU Affero General Public License v3.0 (documentation build only)
   inputtino - Copyright (c) 2021-2024 Games on Whales - MIT License (Linux)
   TPCircularBuffer - Copyright (C) 2012-2013 A Tasty Pixel - zlib-style license (macOS)
   wayland-protocols - MIT License (Linux)
