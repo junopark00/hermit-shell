@@ -82,6 +82,20 @@ namespace platf::clipboard {
   /// (names of at most 255 UTF-16 code units, no reserved names or characters).
   bool is_safe_relative_path(const std::string &path);
 
+  /**
+   * @brief True when a reparse tag names a symbolic link or a mount point (junction), which
+   * copying never follows. Other reparse points (OneDrive and other cloud placeholders,
+   * deduplicated or ProjFS files) are ordinary files and folders to read.
+   * @note IsReparseTagNameSurrogate() from ntifs.h, which the MinGW headers only ship for drivers.
+   */
+  constexpr bool is_link_tag(std::uint32_t tag) {
+    return (tag & 0x20000000u) != 0;
+  }
+
+  /// True for a symbolic link or a mount point (junction); false for anything else, including a
+  /// missing path.
+  bool is_link(const std::filesystem::path &p);
+
   std::string encode_archive(const std::vector<archive_entry> &entries);
 
   /// Parses and fully validates an archive (paths, duplicates, limits). Sets error on failure.
@@ -92,7 +106,7 @@ namespace platf::clipboard {
 
   /**
    * @brief Packs the given files and folders (recursively) into an archive.
-   * Symbolic links and other reparse points are skipped. Fails if the limits are exceeded.
+   * Symbolic links and junctions are skipped (see is_link). Fails if the limits are exceeded.
    */
   bool archive_paths(const std::vector<std::filesystem::path> &roots, std::string &archive, std::string &error);
 
@@ -130,7 +144,8 @@ namespace platf::clipboard {
   std::uint64_t filetime_to_unix_ms(std::uint64_t filetime);
 
   /**
-   * @brief Opens a listed file for reading (links are not followed) and checks that it still has
+   * @brief Opens a listed file for reading (a link in its place counts as changed; a cloud
+   * placeholder is opened so that reading it fetches the content) and checks that it still has
    * the listed size and last write time.
    * @param changed Set to true when the file is gone or differs from the list.
    * @return The handle, or INVALID_HANDLE_VALUE with error set.

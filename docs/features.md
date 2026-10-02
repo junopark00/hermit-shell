@@ -172,7 +172,9 @@ The upstream `/actions/clipboard` endpoint carries text only. On Windows Shell a
   the reason is in the body as plain text.
 - Received files are checked first (paths, duplicates, size), then extracted with the signed-in user's
   rights to `%LOCALAPPDATA%\Temp\ShellClipboard` and placed on the clipboard as CF_HDROP ("copy").
-  Files that are sent are read with the user's rights; links and junctions are not followed.
+  Files that are sent are read with the user's rights; symbolic links and junctions are not
+  followed. Other reparse points, such as OneDrive Files On-Demand placeholders, are ordinary files:
+  reading one fetches its content.
 - When another program holds the clipboard, Shell retries briefly.
 - `GET type=files` and `GET type=filelist` fail with 413 when the copy is over the size or item
   limit, 422 when the files cannot be copied as they are, and 500 when no user is signed in or a

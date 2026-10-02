@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -304,6 +305,41 @@ int main() {
     std::string error;
     std::string packed;
     check("packing nothing fails", !cb::archive_paths({}, packed, error));
+  }
+
+  std::printf("Links and other reparse points\n");
+  {
+    check("symbolic link tag is a link", cb::is_link_tag(IO_REPARSE_TAG_SYMLINK));
+    check("mount point tag is a link", cb::is_link_tag(IO_REPARSE_TAG_MOUNT_POINT));
+    check("cloud placeholder tag is not a link", !cb::is_link_tag(0x9000001A));  // IO_REPARSE_TAG_CLOUD
+    check("dedup tag is not a link", !cb::is_link_tag(0x80000013));  // IO_REPARSE_TAG_DEDUP
+    check("no tag is not a link", !cb::is_link_tag(0));
+
+    fs::path tree = scratch / "links";
+    fs::create_directories(tree / "real");
+    std::ofstream(tree / "real" / "a.txt", std::ios::binary) << "a";
+    check("plain file is not a link", !cb::is_link(tree / "real" / "a.txt"));
+    check("plain folder is not a link", !cb::is_link(tree / "real"));
+    check("missing path is not a link", !cb::is_link(tree / "missing"));
+
+    // A directory junction needs no special rights (unlike a symbolic link); mklink /J makes one.
+    fs::path junction = tree / "junction";
+    std::wstring cmd = L"cmd.exe /c mklink /J \"" + junction.wstring() + L"\" \"" + (tree / "real").wstring() + L"\" >nul";
+    if (_wsystem(cmd.c_str()) == 0 && fs::exists(junction)) {
+      check("junction is a link", cb::is_link(junction));
+      std::vector<cb::file_list_entry> listed;
+      std::string error;
+      bool ok = cb::list_paths({tree}, 1 << 20, listed, error);
+      bool junction_listed = false;
+      for (const auto &entry : listed) {
+        junction_listed = junction_listed || entry.path.find("junction") != std::string::npos;
+      }
+      check("listing skips the junction", ok && !junction_listed && listed.size() == 3);  // links, links/real, links/real/a.txt
+      check("listing only a junction copies nothing", !cb::list_paths({junction}, 1 << 20, listed, error) && error == "nothing to copy");
+      RemoveDirectoryW(junction.c_str());  // removes the junction, not its target
+    } else {
+      std::printf("  skip junction checks (mklink /J failed)\n");
+    }
   }
   fs::remove_all(scratch);
 

@@ -250,9 +250,15 @@ namespace platf::clipboard {
       return narrow(p.generic_wstring());
     }
 
-    bool is_reparse_point(const std::filesystem::path &p) {
-      DWORD attributes = GetFileAttributesW(p.c_str());
-      return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT);
+    /// The reparse tag of a file or folder; 0 when it is not a reparse point or cannot be read.
+    DWORD reparse_tag(const std::filesystem::path &p) {
+      WIN32_FIND_DATAW data {};
+      HANDLE find = FindFirstFileExW(p.c_str(), FindExInfoBasic, &data, FindExSearchNameMatch, nullptr, 0);
+      if (find == INVALID_HANDLE_VALUE) {
+        return 0;
+      }
+      FindClose(find);
+      return (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) ? data.dwReserved0 : 0;
     }
 
     bool read_file(const std::filesystem::path &p, std::uint64_t expected, std::string &out) {
@@ -268,6 +274,10 @@ namespace platf::clipboard {
       return in.peek() == std::char_traits<char>::eof();
     }
   }  // namespace
+
+  bool is_link(const std::filesystem::path &p) {
+    return is_link_tag(reparse_tag(p));
+  }
 
   bool open_with_retry() {
     for (int attempt = 0; attempt < 20; ++attempt) {
@@ -705,7 +715,7 @@ namespace platf::clipboard {
 
     for (const auto &root : roots) {
       std::error_code ec;
-      if (is_reparse_point(root)) {
+      if (is_link(root)) {
         continue;
       }
       auto status = fs::status(root, ec);
@@ -733,7 +743,7 @@ namespace platf::clipboard {
             return false;
           }
           const auto &path = it->path();
-          if (is_reparse_point(path)) {
+          if (is_link(path)) {
             it.disable_recursion_pending();  // never follow links or junctions
             continue;
           }
@@ -803,12 +813,41 @@ namespace platf::clipboard {
   HANDLE open_listed_file(const file_list_entry &entry, bool &changed, std::string &error) {
     changed = false;
     // Sharing like std::ifstream, so files that another program has open can still be copied.
-    HANDLE file = CreateFileW(entry.source.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    auto open = [&](DWORD flags) {
+      HANDLE file = CreateFileW(entry.source.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN | flags, nullptr);
+      if (file == INVALID_HANDLE_VALUE) {
+        DWORD code = GetLastError();
+        changed = code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND;
+        error = changed ? "file is gone" : "cannot open file (error " + std::to_string(code) + ")";
+      }
+      return file;
+    };
+    // Opened without following a reparse point first, so a link put in place of the listed file
+    // is seen as one instead of followed.
+    HANDLE file = open(FILE_FLAG_OPEN_REPARSE_POINT);
     if (file == INVALID_HANDLE_VALUE) {
-      DWORD code = GetLastError();
-      changed = code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND;
-      error = changed ? "file is gone" : "cannot open file (error " + std::to_string(code) + ")";
       return INVALID_HANDLE_VALUE;
+    }
+    FILE_ATTRIBUTE_TAG_INFO tag {};
+    if (!GetFileInformationByHandleEx(file, FileAttributeTagInfo, &tag, sizeof(tag))) {
+      error = "cannot read file attributes (error " + std::to_string(GetLastError()) + ")";
+      CloseHandle(file);
+      return INVALID_HANDLE_VALUE;
+    }
+    if (tag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
+      if (is_link_tag(tag.ReparseTag)) {
+        changed = true;
+        error = "file changed since it was copied";
+        CloseHandle(file);
+        return INVALID_HANDLE_VALUE;
+      }
+      // A cloud placeholder or another reparse point that is not a link: reopened the normal way,
+      // so reading it goes through its filter (OneDrive then fetches the content).
+      CloseHandle(file);
+      file = open(0);
+      if (file == INVALID_HANDLE_VALUE) {
+        return INVALID_HANDLE_VALUE;
+      }
     }
     BY_HANDLE_FILE_INFORMATION info {};
     if (!GetFileInformationByHandle(file, &info)) {
@@ -818,7 +857,7 @@ namespace platf::clipboard {
     }
     const std::uint64_t size = (static_cast<std::uint64_t>(info.nFileSizeHigh) << 32) | info.nFileSizeLow;
     const std::uint64_t write_time = (static_cast<std::uint64_t>(info.ftLastWriteTime.dwHighDateTime) << 32) | info.ftLastWriteTime.dwLowDateTime;
-    if ((info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) || size != entry.size || write_time != entry.write_time) {
+    if ((info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || size != entry.size || write_time != entry.write_time) {
       changed = true;
       error = "file changed since it was copied";
       CloseHandle(file);
