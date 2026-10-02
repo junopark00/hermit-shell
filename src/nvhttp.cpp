@@ -15,6 +15,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -1746,6 +1747,10 @@ namespace nvhttp {
   /// their clipboard sequence number and try again later.
   constexpr auto clipboard_busy_body = "clipboard-busy\nanother program is using the clipboard; try again later"sv;
 
+  /// Shell: 503 for a type=filedata request whose file is still being read for an earlier one. Same
+  /// reason line, so clients treat it as busy and try again later.
+  constexpr auto clipboard_file_reading_body = "clipboard-busy\nthis file is still being read for an earlier request; try again later"sv;
+
   void refuse_clipboard_busy(const resp_https_t &response, const std::string &client, std::string_view what) {
     BOOST_LOG(info) << "Clipboard " << what << " for [" << client << "] not done: another program is using the clipboard";
     response->write(SimpleWeb::StatusCode::server_error_service_unavailable, clipboard_busy_body);
@@ -1927,6 +1932,49 @@ namespace nvhttp {
     });
   }
 
+  /// Shell: a listed file of a device: its cert uuid, the list id and the index in the list.
+  using clipboard_file_key_t = std::tuple<std::string, std::string, std::uint64_t>;
+
+  /// Shell: reads queued or running on the file reader threads, counted per file. A client that
+  /// retries a file whose earlier read stalls gets 503 instead of a second stuck thread.
+  std::mutex clipboard_file_reads_mutex;
+  std::map<clipboard_file_key_t, std::size_t> clipboard_file_reads;
+
+  /// One read of a file, counted for as long as it lives. Only the reader job holds it, so the count
+  /// drops when the job ends whichever way (read, failed, connection gone) and when stop() or post()
+  /// drops the job unrun.
+  class clipboard_file_read_t {
+  public:
+    /// A new read of key, or null if only_if_idle and another one of it is still queued or running.
+    static std::shared_ptr<clipboard_file_read_t> begin(const clipboard_file_key_t &key, bool only_if_idle) {
+      std::lock_guard lock {clipboard_file_reads_mutex};
+      auto &count = clipboard_file_reads[key];
+      if (only_if_idle && count > 0) {
+        return nullptr;
+      }
+      ++count;
+      return std::shared_ptr<clipboard_file_read_t>(new clipboard_file_read_t(key));
+    }
+
+    ~clipboard_file_read_t() {
+      std::lock_guard lock {clipboard_file_reads_mutex};
+      auto it = clipboard_file_reads.find(key);
+      if (it != clipboard_file_reads.end() && --it->second == 0) {
+        clipboard_file_reads.erase(it);
+      }
+    }
+
+    clipboard_file_read_t(const clipboard_file_read_t &) = delete;
+    clipboard_file_read_t &operator=(const clipboard_file_read_t &) = delete;
+
+  private:
+    explicit clipboard_file_read_t(clipboard_file_key_t key):
+        key(std::move(key)) {
+    }
+
+    clipboard_file_key_t key;
+  };
+
   bool parse_u64(const std::string &text, std::uint64_t &value) {
     auto end = text.data() + text.size();
     auto [ptr, ec] = std::from_chars(text.data(), end, value);
@@ -1942,6 +1990,7 @@ namespace nvhttp {
     HANDLE file = INVALID_HANDLE_VALUE;
     std::weak_ptr<SimpleWeb::ServerBase<ShellHTTPS>::Response> response;
     std::string client;
+    clipboard_file_key_t key;
     std::uint64_t index = 0;
     std::uint64_t offset = 0;
     std::uint64_t length = 0;
@@ -1973,7 +2022,8 @@ namespace nvhttp {
     }
     // ReadFile can stall (a network share, a cloud placeholder being fetched), so it runs on the
     // file reader threads. The response travels along untouched, which keeps the connection open.
-    clipboard_file_reader.post([stream, response = std::move(response)]() mutable {
+    // reading counts the read of this file until the job ends.
+    clipboard_file_reader.post([stream, response = std::move(response), reading = clipboard_file_read_t::begin(stream->key, false)]() mutable {
       DWORD want = static_cast<DWORD>(std::min<std::uint64_t>(clipboard_file_chunk_bytes, stream->length - stream->sent));
       DWORD got = 0;
       bool read = ReadFile(stream->file, stream->buffer.data(), want, &got, nullptr) && got == want;
@@ -2009,7 +2059,8 @@ namespace nvhttp {
    * the client's file list, from offset to the end (offset lets the client resume).
    * 400 bad arguments, 404 index is not a file, 409 the file is gone or changed since the list was
    * made, 410 unknown or dropped list (also when it was made in an earlier stream session or for
-   * another signed-in user), 416 offset past the end, 500 the file cannot be opened.
+   * another signed-in user), 416 offset past the end, 500 the file cannot be opened, 503 an earlier
+   * read of the file is still queued or running (the client retries later).
    */
   void send_clipboard_file(resp_https_t response, const crypto::named_cert_t *named_cert_p, const args_t &args, const std::shared_ptr<SimpleWeb::io_context> &io) {
     const std::string &client = named_cert_p->name;
@@ -2039,16 +2090,29 @@ namespace nvhttp {
       return;
     }
 
+    // Shell: a retry of a file whose earlier read is still stalled would hold up a second reader
+    // thread, and the four of them could all end up waiting for the same file.
+    clipboard_file_key_t key {named_cert_p->uuid, snapshot->id, index};
+    auto reading = clipboard_file_read_t::begin(key, true);
+    if (!reading) {
+      BOOST_LOG(info) << "Clipboard file " << index << " not sent to [" << client << "]: an earlier read of it is still running";
+      response->write(SimpleWeb::StatusCode::server_error_service_unavailable, clipboard_file_reading_body);
+      response->close_connection_after_response = true;
+      return;
+    }
+
     auto stream = std::make_shared<clipboard_file_stream_t>();
     stream->io = io;
     stream->client = client;
+    stream->key = std::move(key);
     stream->index = index;
     stream->offset = offset;
     stream->length = entry.size - offset;
 
     // Opening and checking the file can stall on a network share, so a file reader thread does it
-    // and the io thread then answers. named_cert_p is not used off the io thread.
-    clipboard_file_reader.post([stream, response = std::move(response), entry]() mutable {
+    // and the io thread then answers. named_cert_p is not used off the io thread. reading counts the
+    // read of this file until the job ends.
+    clipboard_file_reader.post([stream, response = std::move(response), entry, reading = std::move(reading)]() mutable {
       bool changed = false;
       std::string why;
       try {
