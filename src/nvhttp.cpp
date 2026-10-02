@@ -13,6 +13,7 @@
 #include <format>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <tuple>
@@ -1747,9 +1748,9 @@ namespace nvhttp {
   /// their clipboard sequence number and try again later.
   constexpr auto clipboard_busy_body = "clipboard-busy\nanother program is using the clipboard; try again later"sv;
 
-  /// Shell: 503 for a type=filedata request whose file is still being read for an earlier one. Same
-  /// reason line, so clients treat it as busy and try again later.
-  constexpr auto clipboard_file_reading_body = "clipboard-busy\nthis file is still being read for an earlier request; try again later"sv;
+  /// Shell: 503 for a type=filedata request whose file is stalled in a read for an earlier one. Same
+  /// reason line, so clients treat it as busy and try again after a short wait.
+  constexpr auto clipboard_file_reading_body = "clipboard-busy\nthis file is stalled in a read for an earlier request; try again later"sv;
 
   void refuse_clipboard_busy(const resp_https_t &response, const std::string &client, std::string_view what) {
     BOOST_LOG(info) << "Clipboard " << what << " for [" << client << "] not done: another program is using the clipboard";
@@ -1935,31 +1936,68 @@ namespace nvhttp {
   /// Shell: a listed file of a device: its cert uuid, the list id and the index in the list.
   using clipboard_file_key_t = std::tuple<std::string, std::string, std::uint64_t>;
 
-  /// Shell: reads queued or running on the file reader threads, counted per file. A client that
-  /// retries a file whose earlier read stalls gets 503 instead of a second stuck thread.
+  /// Shell: how long a read of a file may sit in one open or ReadFile call before a new request for
+  /// the same file gets 503. Shorter overlaps (Explorer seeking, a resume right after a cut while a
+  /// chunk is still being read) go through: two reads of one file for a moment are harmless.
+  constexpr auto clipboard_file_stall_after = std::chrono::seconds(3);
+
+  /// Shell: the reads of one file queued or running on the file reader threads, and when each call
+  /// of theirs that is under way in opening or reading the file began.
+  struct clipboard_file_reads_t {
+    std::size_t count = 0;
+    std::multiset<std::chrono::steady_clock::time_point> calls;
+  };
+
+  /// Shell: reads per file. A client that retries a file whose earlier read stalls gets 503 instead
+  /// of a second stuck thread.
   std::mutex clipboard_file_reads_mutex;
-  std::map<clipboard_file_key_t, std::size_t> clipboard_file_reads;
+  std::map<clipboard_file_key_t, clipboard_file_reads_t> clipboard_file_reads;
 
   /// One read of a file, counted for as long as it lives. Only the reader job holds it, so the count
   /// drops when the job ends whichever way (read, failed, connection gone) and when stop() or post()
   /// drops the job unrun.
   class clipboard_file_read_t {
   public:
-    /// A new read of key, or null if only_if_idle and another one of it is still queued or running.
-    static std::shared_ptr<clipboard_file_read_t> begin(const clipboard_file_key_t &key, bool only_if_idle) {
+    /// The time one call of a read spends opening or reading the file (which can stall), marked from
+    /// construction to destruction. Lives inside the job, so within the read it belongs to.
+    class call_t {
+    public:
+      explicit call_t(const clipboard_file_read_t &read) {
+        std::lock_guard lock {clipboard_file_reads_mutex};
+        reads = clipboard_file_reads.find(read.key);  // there while the read counts in it
+        call = reads->second.calls.insert(std::chrono::steady_clock::now());
+      }
+
+      ~call_t() {
+        std::lock_guard lock {clipboard_file_reads_mutex};
+        reads->second.calls.erase(call);
+      }
+
+      call_t(const call_t &) = delete;
+      call_t &operator=(const call_t &) = delete;
+
+    private:
+      std::map<clipboard_file_key_t, clipboard_file_reads_t>::iterator reads;
+      std::multiset<std::chrono::steady_clock::time_point>::iterator call;
+    };
+
+    /// A new read of key, or null if refuse_if_stalled and another read of it has been in one open
+    /// or ReadFile call for clipboard_file_stall_after or longer.
+    static std::shared_ptr<clipboard_file_read_t> begin(const clipboard_file_key_t &key, bool refuse_if_stalled) {
       std::lock_guard lock {clipboard_file_reads_mutex};
-      auto &count = clipboard_file_reads[key];
-      if (only_if_idle && count > 0) {
+      auto &reads = clipboard_file_reads[key];
+      // A call under way belongs to a read that is counted, so a refusal leaves no empty entry.
+      if (refuse_if_stalled && !reads.calls.empty() && std::chrono::steady_clock::now() - *reads.calls.begin() >= clipboard_file_stall_after) {
         return nullptr;
       }
-      ++count;
+      ++reads.count;
       return std::shared_ptr<clipboard_file_read_t>(new clipboard_file_read_t(key));
     }
 
     ~clipboard_file_read_t() {
       std::lock_guard lock {clipboard_file_reads_mutex};
       auto it = clipboard_file_reads.find(key);
-      if (it != clipboard_file_reads.end() && --it->second == 0) {
+      if (it != clipboard_file_reads.end() && --it->second.count == 0) {
         clipboard_file_reads.erase(it);
       }
     }
@@ -2026,7 +2064,11 @@ namespace nvhttp {
     clipboard_file_reader.post([stream, response = std::move(response), reading = clipboard_file_read_t::begin(stream->key, false)]() mutable {
       DWORD want = static_cast<DWORD>(std::min<std::uint64_t>(clipboard_file_chunk_bytes, stream->length - stream->sent));
       DWORD got = 0;
-      bool read = ReadFile(stream->file, stream->buffer.data(), want, &got, nullptr) && got == want;
+      bool read;
+      {
+        clipboard_file_read_t::call_t call {*reading};
+        read = ReadFile(stream->file, stream->buffer.data(), want, &got, nullptr) && got == want;
+      }
       boost::asio::post(*stream->io, [stream, response = std::move(response), got, read]() {
         if (!read) {
           // The file shrank or became unreadable: the client sees a body shorter than Content-Length.
@@ -2060,7 +2102,8 @@ namespace nvhttp {
    * 400 bad arguments, 404 index is not a file, 409 the file is gone or changed since the list was
    * made, 410 unknown or dropped list (also when it was made in an earlier stream session or for
    * another signed-in user), 416 offset past the end, 500 the file cannot be opened, 503 an earlier
-   * read of the file is still queued or running (the client retries later).
+   * read of the file has been stalled in opening or reading it for clipboard_file_stall_after (the
+   * client retries after a short wait).
    */
   void send_clipboard_file(resp_https_t response, const crypto::named_cert_t *named_cert_p, const args_t &args, const std::shared_ptr<SimpleWeb::io_context> &io) {
     const std::string &client = named_cert_p->name;
@@ -2090,12 +2133,13 @@ namespace nvhttp {
       return;
     }
 
-    // Shell: a retry of a file whose earlier read is still stalled would hold up a second reader
-    // thread, and the four of them could all end up waiting for the same file.
+    // Shell: a retry of a file whose earlier read is stalled would hold up a second reader thread,
+    // and the four of them could all end up waiting for the same file. An earlier read that is only
+    // queued or briefly busy (the client dropped it a moment ago) does not count.
     clipboard_file_key_t key {named_cert_p->uuid, snapshot->id, index};
     auto reading = clipboard_file_read_t::begin(key, true);
     if (!reading) {
-      BOOST_LOG(info) << "Clipboard file " << index << " not sent to [" << client << "]: an earlier read of it is still running";
+      BOOST_LOG(info) << "Clipboard file " << index << " not sent to [" << client << "]: an earlier read of it is stalled";
       response->write(SimpleWeb::StatusCode::server_error_service_unavailable, clipboard_file_reading_body);
       response->close_connection_after_response = true;
       return;
@@ -2115,24 +2159,27 @@ namespace nvhttp {
     clipboard_file_reader.post([stream, response = std::move(response), entry, reading = std::move(reading)]() mutable {
       bool changed = false;
       std::string why;
-      try {
-        if (!run_as_console_user([&](HANDLE) {
-              stream->file = platf::clipboard::open_listed_file(entry, changed, why);
-            })) {
-          why = "no user session";
+      {
+        clipboard_file_read_t::call_t call {*reading};
+        try {
+          if (!run_as_console_user([&](HANDLE) {
+                stream->file = platf::clipboard::open_listed_file(entry, changed, why);
+              })) {
+            why = "no user session";
+          }
+        } catch (const std::exception &e) {
+          RevertToSelf();  // the job may have thrown while impersonating the console user
+          BOOST_LOG(error) << "Clipboard file job failed: " << e.what();
+          why = "cannot open file";
         }
-      } catch (const std::exception &e) {
-        RevertToSelf();  // the job may have thrown while impersonating the console user
-        BOOST_LOG(error) << "Clipboard file job failed: " << e.what();
-        why = "cannot open file";
-      }
-      LARGE_INTEGER position;
-      position.QuadPart = static_cast<LONGLONG>(stream->offset);
-      if (stream->file != INVALID_HANDLE_VALUE && stream->offset > 0 && !SetFilePointerEx(stream->file, position, nullptr, FILE_BEGIN)) {
-        CloseHandle(stream->file);
-        stream->file = INVALID_HANDLE_VALUE;
-        changed = false;
-        why = "cannot seek";
+        LARGE_INTEGER position;
+        position.QuadPart = static_cast<LONGLONG>(stream->offset);
+        if (stream->file != INVALID_HANDLE_VALUE && stream->offset > 0 && !SetFilePointerEx(stream->file, position, nullptr, FILE_BEGIN)) {
+          CloseHandle(stream->file);
+          stream->file = INVALID_HANDLE_VALUE;
+          changed = false;
+          why = "cannot seek";
+        }
       }
       boost::asio::post(*stream->io, [stream, response = std::move(response), changed, why]() {
         if (stream->file == INVALID_HANDLE_VALUE) {

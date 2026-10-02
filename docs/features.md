@@ -204,7 +204,7 @@ The upstream `/actions/clipboard` endpoint carries text only. On Windows Shell a
   held, `GET type=text`, `type=image`, `type=files` and `type=filelist` and every `POST` answer 503
   with the body `clipboard-busy` and a line of text; clients keep their last change number and try
   again later. `type=info` and `type=filedata` never wait for the clipboard; `type=filedata` answers
-  the same 503 only while an earlier read of the same file is still running (see below). An empty 200
+  the same 503 only while an earlier read of the same file is stalled (see below). An empty 200
   reply (`type=text`, `type=image`, `type=files`, `type=filelist`) means only that the clipboard
   holds nothing of that type. `GET type=text` answers 500 (plain text) when the clipboard lists text
   that cannot be read; real text is a 200 with the text.
@@ -254,8 +254,8 @@ The upstream `/actions/clipboard` endpoint carries text only. On Windows Shell a
   memory. The file is opened with the user's rights and must still have the listed size and last
   write time. Errors: 400 bad arguments, 404 the index is not a file of the list, 409 the file is gone
   or changed, 410 unknown, dropped or expired list, 416 offset past the end, 500 the file cannot be
-  opened, 503 `clipboard-busy` an earlier read of the same file is still running. If the file cannot
-  be read to the end, the connection closes early.
+  opened, 503 `clipboard-busy` an earlier read of the same file is stalled (clients retry after a
+  short wait). If the file cannot be read to the end, the connection closes early.
 - Walking folders for `type=filelist`, reading files for `GET type=files` and checking and unpacking
   `POST type=files` run on a separate worker thread, one at a time, so other requests from any
   device are not held up meanwhile.
@@ -263,11 +263,14 @@ The upstream `/actions/clipboard` endpoint carries text only. On Windows Shell a
   worker (such as a 256 MB `type=files` archive) does not hold up downloads. Each file is read in
   order, one chunk after the previous one was sent, and uses one thread at a time. A read that stalls
   (a OneDrive placeholder being fetched, a slow network share) holds up only its own thread; the
-  other downloads continue on the rest. While a read of a file is queued or running, a new
-  `type=filedata` request for the same file (same device, list and index), such as a retry after the
-  client gave up on a stalled read, gets 503 `clipboard-busy` instead of a second thread, and the
-  client tries again later. So it takes four different stalled files at once to hold up all
-  downloads.
+  other downloads continue on the rest. While a read of a file has been stuck in one open or read
+  call for more than 3 seconds, a new `type=filedata` request for the same file (same device, list
+  and index), such as a retry after the client gave up on the stalled read, gets 503
+  `clipboard-busy` instead of a second thread, and the client retries after a short wait. A new
+  request that only overlaps an earlier read briefly (Explorer seeking within a file, a resume right
+  after a cut while one chunk is still being read) goes through; the file is then read twice for a
+  moment. Only a request that arrives within the first 3 seconds of a stall can take another thread
+  for that file, so holding up all downloads takes several stalled reads at once.
 - The HTTPS server ends a request whose upload or response takes longer than 30 minutes (1,800
   seconds), which leaves a 256 MB `type=files` transfer room down to about 1.2 Mbps. Longer
   `type=filedata` downloads are cut; clients continue with `offset=<bytes received>`. The 4 GB limit
