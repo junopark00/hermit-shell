@@ -164,7 +164,7 @@ namespace platf::clipboard {
 
     /// Case-insensitive key for duplicate detection (Windows paths ignore case): the Unicode
     /// uppercase mapping of the invariant locale, not only ASCII, close to how NTFS compares names.
-    /// Hermit uses QString::toUpper() for the same check.
+    /// Hermit folds the same way (see its foldPath()).
     std::wstring fold(const std::string &utf8) {
       std::wstring w = widen(utf8);
       if (w.empty()) {
