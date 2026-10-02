@@ -67,10 +67,6 @@ namespace nvhttp {
   struct pair_session_t;
 
   crypto::cert_chain_t cert_chain;
-  static std::string one_time_pin;
-  static std::string otp_passphrase;
-  static std::string otp_device_name;
-  static std::chrono::time_point<std::chrono::steady_clock> otp_creation_time;
 
   class ShellHTTPSServer: public SimpleWeb::ServerBase<ShellHTTPS> {
   public:
@@ -757,37 +753,6 @@ namespace nvhttp {
         auto ptr = map_id_sess.emplace(sess.client.uniqueID, std::move(sess)).first;
 
         ptr->second.async_insert_pin.salt = std::move(get_arg(args, "salt"));
-
-        auto it = args.find("otpauth");
-        if (it != std::end(args)) {
-          if (one_time_pin.empty() || (std::chrono::steady_clock::now() - otp_creation_time > OTP_EXPIRE_DURATION)) {
-            one_time_pin.clear();
-            otp_passphrase.clear();
-            otp_device_name.clear();
-            tree.put("root.<xmlattr>.status_code", 503);
-            tree.put("root.<xmlattr>.status_message", "OTP auth not available.");
-          } else {
-            auto hash = util::hex(crypto::hash(one_time_pin + ptr->second.async_insert_pin.salt + otp_passphrase), true);
-
-            if (hash.to_string_view() == it->second) {
-
-              if (!otp_device_name.empty()) {
-                ptr->second.client.name = std::move(otp_device_name);
-              }
-
-              getservercert(ptr->second, tree, one_time_pin);
-
-              one_time_pin.clear();
-              otp_passphrase.clear();
-              otp_device_name.clear();
-              return;
-            }
-          }
-
-          // Always return positive, attackers will fail in the next steps.
-          getservercert(ptr->second, tree, crypto::rand(16));
-          return;
-        }
 
         if (config::shell.flags[config::flag::PIN_STDIN]) {
           std::string pin;
@@ -2305,19 +2270,6 @@ namespace nvhttp {
 
     ssl.join();
     tcp.join();
-  }
-
-  std::string request_otp(const std::string& passphrase, const std::string& deviceName) {
-    if (passphrase.size() < 4) {
-      return "";
-    }
-
-    one_time_pin = crypto::rand_alphabet(4, "0123456789"sv);
-    otp_passphrase = passphrase;
-    otp_device_name = deviceName;
-    otp_creation_time = std::chrono::steady_clock::now();
-
-    return one_time_pin;
   }
 
   void

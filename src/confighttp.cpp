@@ -1476,45 +1476,6 @@ namespace confighttp {
   }
 
   /**
-   * @brief Get a one-time password (OTP).
-   * @param response The HTTP response object.
-   * @param request The HTTP request object.
-   *
-   * @api_examples{/api/otp| GET| null}
-   */
-  void getOTP(resp_https_t response, req_https_t request) {
-    if (!validateContentType(response, request, "application/json") || !authenticate(response, request)) {
-      return;
-    }
-
-    print_req(request);
-
-    nlohmann::json output_tree;
-    try {
-      std::stringstream ss;
-      ss << request->content.rdbuf();
-      nlohmann::json input_tree = nlohmann::json::parse(ss.str());
-
-      std::string passphrase = input_tree.value("passphrase", "");
-      if (passphrase.empty())
-        throw std::runtime_error("Passphrase not provided!");
-      if (passphrase.size() < 4)
-        throw std::runtime_error("Passphrase too short!");
-
-      std::string deviceName = input_tree.value("deviceName", "");
-      output_tree["otp"] = nvhttp::request_otp(passphrase, deviceName);
-      output_tree["ip"] = platf::get_local_ip_for_gateway();
-      output_tree["name"] = config::nvhttp.shell_name;
-      output_tree["status"] = true;
-      output_tree["message"] = "OTP created, effective within 3 minutes.";
-      send_response(response, output_tree);
-    } catch (std::exception &e) {
-      BOOST_LOG(warning) << "OTP creation failed: "sv << e.what();
-      bad_request(response, request, e.what());
-    }
-  }
-
-  /**
    * @brief Send a PIN code to the host.
    * @param response The HTTP response object.
    * @param request The HTTP request object.
@@ -1785,7 +1746,6 @@ namespace confighttp {
     server.resource["^/troubleshooting/?$"]["GET"] = getTroubleshootingPage;
     server.resource["^/api/login"]["POST"] = login;
     server.resource["^/api/pin$"]["POST"] = savePin;
-    server.resource["^/api/otp$"]["POST"] = getOTP;
     server.resource["^/api/apps$"]["GET"] = getApps;
     server.resource["^/api/apps$"]["POST"] = saveApp;
     server.resource["^/api/apps/reorder$"]["POST"] = reorderApps;

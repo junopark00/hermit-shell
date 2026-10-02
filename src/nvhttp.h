@@ -52,8 +52,6 @@ namespace nvhttp {
    */
   constexpr auto PORT_HTTPS = -5;
 
-  constexpr auto OTP_EXPIRE_DURATION = 180s;
-
   /**
    * @brief Start the nvhttp server.
    * @examples
@@ -194,8 +192,6 @@ namespace nvhttp {
    * @examples_end
    */
   bool pin(std::string pin, std::string name);
-
-  std::string request_otp(const std::string& passphrase, const std::string& deviceName);
 
   /**
    * @brief Remove single client.

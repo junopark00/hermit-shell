@@ -125,7 +125,6 @@ Web UI (src_assets/common/assets/web)
   vue-i18n - Copyright (c) kazuya kawaguchi and contributors - MIT License
   Bootstrap - Copyright (c) The Bootstrap Authors - MIT License
   Font Awesome Free - Fonticons, Inc. - icons CC BY 4.0, fonts SIL OFL 1.1, code MIT License
-  QRCode.js (public/assets/js/qrcode.min.js) - Copyright (c) 2012 davidshimjs - MIT License
   IBM Plex Sans KR (Regular, Medium, SemiBold) and IBM Plex Sans Condensed (Medium, SemiBold)
     Copyright 2017 IBM Corp. - SIL Open Font License 1.1 - public/assets/fonts/IBM-Plex-OFL.txt
 

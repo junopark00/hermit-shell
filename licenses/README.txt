@@ -25,7 +25,7 @@ Drivers and installers
   SudoVDA.txt, nefcon.txt, ViGEmBus.txt
 
 Web UI
-  Vue.txt, vue-i18n.txt, Bootstrap.txt, Font-Awesome-Free.txt, QRCode.js.txt, IBM-Plex.txt
+  Vue.txt, vue-i18n.txt, Bootstrap.txt, Font-Awesome-Free.txt, IBM-Plex.txt
 
 The source code of the GPL and LGPL components is available from the projects named in each
 file; the complete corresponding source of Shell is at https://github.com/junopark00/hermit-shell.
