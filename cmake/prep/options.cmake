@@ -7,7 +7,6 @@ set(SHELL_PUBLISHER_ISSUE_URL "https://github.com/junopark00/hermit-shell/issues
         CACHE STRING "The URL of the publisher's support site or issue tracker.
         If you provide a modified version of Shell, we kindly request that you use your own url.")
 
-option(BUILD_DOCS "Build documentation" OFF)
 option(BUILD_TESTS "Build tests" OFF)
 option(NPM_OFFLINE "Use offline npm packages. You must ensure packages are in your npm cache." OFF)
 

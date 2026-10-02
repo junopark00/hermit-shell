@@ -76,7 +76,7 @@ if (Test-Path -LiteralPath $cache) {
 $unixRepo = (& $bash -lc "cygpath -u '$repo'").Trim()
 $steps = @(
     "cd '$unixRepo'",
-    "cmake -B '$BuildDir' -G Ninja -S . -DCMAKE_BUILD_TYPE=$BuildType -DBUILD_DOCS=OFF -DBUILD_TESTS=OFF",
+    "cmake -B '$BuildDir' -G Ninja -S . -DCMAKE_BUILD_TYPE=$BuildType -DBUILD_TESTS=OFF",
     "ninja -C '$BuildDir'"
 )
 if ($Package) { $steps += "cpack -G ZIP --config './$BuildDir/CPackConfig.cmake'" }

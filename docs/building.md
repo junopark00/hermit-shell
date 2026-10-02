@@ -36,8 +36,7 @@ pacman -S --needed \
 ```
 
 `mingw-w64-ucrt-x86_64-boost` is optional: when the installed Boost is not the exact version Shell
-expects, CMake downloads the Boost sources instead. `mingw-w64-ucrt-x86_64-nsis` is only needed for the
-NSIS installer package, and `doxygen` and `graphviz` only for the API documentation.
+expects, CMake downloads the Boost sources instead.
 
 ### Node.js
 
@@ -87,7 +86,7 @@ From Windows PowerShell in the repository root:
 | `-Msys2Root` | `C:\msys64` | MSYS2 installation |
 
 The script checks the prerequisites, sets the version, configures with CMake
-(`-G Ninja -DBUILD_DOCS=OFF -DBUILD_TESTS=OFF`), builds with Ninja and, with `-Package`, runs
+(`-G Ninja -DBUILD_TESTS=OFF`), builds with Ninja and, with `-Package`, runs
 `cpack -G ZIP`. A build folder configured for another source path is recreated automatically. Nothing
 is installed; to install the result, see [tools.md](tools.md#install-shellps1), or run
 `.\shell\Update-Shell.ps1` to build and install in one step.
