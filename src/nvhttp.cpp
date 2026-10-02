@@ -48,6 +48,8 @@
 #include "zwpad.h"
 
 #ifdef _WIN32
+  #include <pthread.h>  // pthread_gethandle: std::thread is a winpthreads thread under MinGW
+
   #include "platform/windows/clipboard.h"
   #include "platform/windows/misc.h"
   #include "platform/windows/utils.h"
@@ -1794,8 +1796,9 @@ namespace nvhttp {
   /// working after the client fetched a newer one. Older lists are dropped (410 Gone), and so are
   /// lists from an earlier stream session of the client: a list lives only as long as its session.
   constexpr std::size_t clipboard_snapshots_per_client = 2;
-  std::mutex clipboard_snapshots_mutex;
-  std::map<std::string, std::deque<std::shared_ptr<const clipboard_snapshot_t>>> clipboard_snapshots;
+  // Never destroyed, as the clipboard workers below (a listing job left behind by stop() stores here)
+  std::mutex &clipboard_snapshots_mutex = *new std::mutex;
+  auto &clipboard_snapshots = *new std::map<std::string, std::deque<std::shared_ptr<const clipboard_snapshot_t>>>;
 
   void store_clipboard_snapshot(const std::string &client_uuid, std::shared_ptr<const clipboard_snapshot_t> snapshot) {
     std::lock_guard lock {clipboard_snapshots_mutex};
@@ -1843,28 +1846,62 @@ namespace nvhttp {
       std::lock_guard lock {mutex};
       stopping = false;
       for (std::size_t i = 0; i < count; ++i) {
+        ++running;
         threads.emplace_back([this]() {
           run();
+          std::lock_guard lock {mutex};
+          --running;
+          done.notify_all();
         });
       }
     }
 
-    /// Waits for the running jobs; queued jobs are dropped without a reply.
-    void stop() {
-      {
-        std::lock_guard lock {mutex};
-        stopping = true;
-      }
+    /**
+     * @brief Waits for the running jobs until deadline; queued jobs are dropped without a reply.
+     * A job can be stuck in a call on a hung network share or a OneDrive placeholder, and Shell
+     * must be down before its 10 s force shutdown. So after stop_grace the blocking file calls of
+     * the threads are cancelled (CancelSynchronousIo reaches only a call under way, hence again
+     * every stop_poll), and threads still stuck at the deadline are left behind, detached. Such a
+     * thread uses its worker when its job ends, so the workers are never destroyed.
+     * @return True if every thread ended, false if some were left behind.
+     */
+    bool stop(std::chrono::steady_clock::time_point deadline) {
+      std::unique_lock lock {mutex};
+      stopping = true;
       wake.notify_all();
+      const auto cancel_from = std::min(std::chrono::steady_clock::now() + stop_grace, deadline);
+      for (;;) {
+        if (std::chrono::steady_clock::now() >= cancel_from) {
+          for (auto &thread : threads) {
+            CancelSynchronousIo(static_cast<HANDLE>(pthread_gethandle(thread.native_handle())));
+          }
+        }
+        if (done.wait_for(lock, stop_poll, [this]() {
+              return running == 0;
+            })) {
+          break;
+        }
+        if (std::chrono::steady_clock::now() >= deadline) {
+          break;
+        }
+      }
+      const std::size_t stuck = running;
+      std::deque<std::function<void()>> dropped;
+      dropped.swap(jobs);
+      lock.unlock();
+
       for (auto &thread : threads) {
-        if (thread.joinable()) {
+        if (stuck == 0) {
           thread.join();
+        } else {
+          thread.detach();  // the threads that did end are only released
         }
       }
       threads.clear();
-      std::deque<std::function<void()>> dropped;
-      std::lock_guard lock {mutex};
-      dropped.swap(jobs);
+      if (stuck > 0) {
+        BOOST_LOG(warning) << "Clipboard: " << stuck << " file job(s) still stuck in a file call at shutdown; left behind";
+      }
+      return stuck == 0;
     }
 
     void post(std::function<void()> job) {
@@ -1897,22 +1934,31 @@ namespace nvhttp {
       }
     }
 
+    static constexpr auto stop_grace = std::chrono::seconds(1);
+    static constexpr auto stop_poll = std::chrono::milliseconds(100);
+
     std::mutex mutex;
     std::condition_variable wake;
+    std::condition_variable done;  ///< a thread ended
     std::deque<std::function<void()>> jobs;
     bool stopping = false;
+    std::size_t running = 0;  ///< threads started and not yet ended
     std::vector<std::thread> threads;
   };
 
+  /// Shell: how long stopping waits for the clipboard jobs (see clipboard_worker_t::stop()).
+  constexpr auto clipboard_stop_timeout = std::chrono::seconds(3);
+
   /// Listing and packing (type=filelist, GET type=files) and unpacking (POST type=files), one at a time.
-  clipboard_worker_t clipboard_worker;
+  /// Never destroyed (see clipboard_worker_t::stop()).
+  clipboard_worker_t &clipboard_worker = *new clipboard_worker_t;
 
   /// Opening and reading the files of type=filedata, apart from clipboard_worker so a long job
   /// there (a 256 MB archive) does not hold up downloads. Each read waits for the previous chunk of
   /// its file to be sent, so a file is read strictly in order and holds at most one thread; a file
   /// whose read stalls (a OneDrive placeholder being fetched, a slow network share) holds up only
   /// that thread, and the others keep serving the remaining downloads of every device.
-  clipboard_worker_t clipboard_file_reader;
+  clipboard_worker_t &clipboard_file_reader = *new clipboard_worker_t;
   constexpr std::size_t clipboard_file_reader_threads = 4;
 
   /**
@@ -1960,8 +2006,9 @@ namespace nvhttp {
 
   /// Shell: reads per file. A client that retries a file whose earlier read stalls gets 503 instead
   /// of a second stuck thread.
-  std::mutex clipboard_file_reads_mutex;
-  std::map<clipboard_file_key_t, clipboard_file_reads_t> clipboard_file_reads;
+  /// Never destroyed, as the clipboard workers (a read job left behind by stop() ends its count here).
+  std::mutex &clipboard_file_reads_mutex = *new std::mutex;
+  auto &clipboard_file_reads = *new std::map<clipboard_file_key_t, clipboard_file_reads_t>;
 
   /// One read of a file, counted for as long as it lives. Only the reader job holds it, so the count
   /// drops when the job ends whichever way (read, failed, connection gone) and when stop() or post()
@@ -2858,8 +2905,15 @@ namespace nvhttp {
     ssl.join();
     tcp.join();
 #ifdef _WIN32
-    clipboard_worker.stop();
-    clipboard_file_reader.stop();
+    const auto clipboard_deadline = std::chrono::steady_clock::now() + clipboard_stop_timeout;
+    bool clipboard_ended = clipboard_worker.stop(clipboard_deadline);
+    clipboard_ended = clipboard_file_reader.stop(clipboard_deadline) && clipboard_ended;
+    if (!clipboard_ended) {
+      // Shell: a job left behind posts its reply, with the response, to the stopped HTTPS io
+      // context. Kept alive, the context never runs nor destroys that reply, so no response is
+      // finished (its deleter uses https_server) or destroyed after this returns.
+      new std::shared_ptr<SimpleWeb::io_context>(https_server.io_service);
+    }
 #endif
   }
 
