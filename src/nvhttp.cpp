@@ -1761,9 +1761,12 @@ namespace nvhttp {
     return !text.empty() && ec == std::errc {} && ptr == end;
   }
 
-  /// One file being sent for GET type=filedata: read in chunks from the open handle, each chunk
-  /// queued only after the previous one was written to the socket.
+  /// One file being sent for GET type=filedata: read in chunks on the clipboard worker, each chunk
+  /// written on the io thread and the next one read only after it was written to the socket. The
+  /// steps hand the stream from one thread to the other, so only one of them uses it at a time; the
+  /// response is used, and released, on the io thread only.
   struct clipboard_file_stream_t {
+    std::shared_ptr<SimpleWeb::io_context> io;  ///< the HTTPS io thread
     HANDLE file = INVALID_HANDLE_VALUE;
     std::weak_ptr<SimpleWeb::ServerBase<ShellHTTPS>::Response> response;
     std::string client;
@@ -1791,33 +1794,42 @@ namespace nvhttp {
   // making it buffer the file, large enough to keep a fast link busy.
   constexpr std::size_t clipboard_file_chunk_bytes = 256 * 1024;
 
-  void send_clipboard_file_chunk(const std::shared_ptr<clipboard_file_stream_t> &stream) {
-    // The response is kept alive by the write in flight; once it is gone the connection is closed.
-    auto response = stream->response.lock();
-    if (!response) {
-      stream->log_end("stopped");
-      return;
-    }
+  void send_clipboard_file_chunk(std::shared_ptr<clipboard_file_stream_t> stream, resp_https_t response) {
     if (stream->sent == stream->length) {
       stream->log_end("sent");
       return;  // releasing the response finishes it (and closes the connection)
     }
-    DWORD want = static_cast<DWORD>(std::min<std::uint64_t>(clipboard_file_chunk_bytes, stream->length - stream->sent));
-    DWORD got = 0;
-    if (!ReadFile(stream->file, stream->buffer.data(), want, &got, nullptr) || got != want) {
-      // The file shrank or became unreadable: the client sees a body shorter than Content-Length.
-      stream->log_end("failed (read error)");
-      return;
-    }
-    response->write(stream->buffer.data(), got);
-    stream->sent += got;
-    response->send([stream](const SimpleWeb::error_code &ec) {
-      if (ec) {
-        stream->log_end("failed (connection closed)");
-        return;
-      }
-      send_clipboard_file_chunk(stream);
+    // ReadFile can stall (a network share, a cloud placeholder being fetched), so it runs on the
+    // clipboard worker. The response travels along untouched, which keeps the connection open.
+    clipboard_worker.post([stream, response = std::move(response)]() mutable {
+      DWORD want = static_cast<DWORD>(std::min<std::uint64_t>(clipboard_file_chunk_bytes, stream->length - stream->sent));
+      DWORD got = 0;
+      bool read = ReadFile(stream->file, stream->buffer.data(), want, &got, nullptr) && got == want;
+      boost::asio::post(*stream->io, [stream, response = std::move(response), got, read]() {
+        if (!read) {
+          // The file shrank or became unreadable: the client sees a body shorter than Content-Length.
+          stream->log_end("failed (read error)");
+          return;
+        }
+        response->write(stream->buffer.data(), got);
+        stream->sent += got;
+        response->send([stream](const SimpleWeb::error_code &ec) {
+          // SimpleWeb keeps the response alive through the write and this callback.
+          auto response = stream->response.lock();
+          if (ec || !response) {
+            stream->log_end(ec ? "failed (connection closed)" : "stopped");
+            return;
+          }
+          send_clipboard_file_chunk(stream, std::move(response));
+        });
+      });
     });
+  }
+
+  void refuse_clipboard_file(const resp_https_t &response, const std::string &client, SimpleWeb::StatusCode code, const std::string &why) {
+    BOOST_LOG(info) << "Clipboard file not sent to [" << client << "]: " << why;
+    response->write(code, why);
+    response->close_connection_after_response = true;
   }
 
   /**
@@ -1827,72 +1839,82 @@ namespace nvhttp {
    * made, 410 unknown or dropped list (also when it was made in an earlier stream session or for
    * another signed-in user), 416 offset past the end, 500 the file cannot be opened.
    */
-  void send_clipboard_file(resp_https_t response, const crypto::named_cert_t *named_cert_p, const args_t &args) {
-    auto fail = [&](SimpleWeb::StatusCode code, const std::string &why) {
-      BOOST_LOG(info) << "Clipboard file not sent to [" << named_cert_p->name << "]: " << why;
-      response->write(code, why);
-      response->close_connection_after_response = true;
-    };
+  void send_clipboard_file(resp_https_t response, const crypto::named_cert_t *named_cert_p, const args_t &args, const std::shared_ptr<SimpleWeb::io_context> &io) {
+    const std::string &client = named_cert_p->name;
     std::uint64_t index = 0;
     std::uint64_t offset = 0;
     if (!parse_u64(get_arg(args, "index", ""), index) || !parse_u64(get_arg(args, "offset", "0"), offset)) {
-      fail(SimpleWeb::StatusCode::client_error_bad_request, "bad index or offset");
+      refuse_clipboard_file(response, client, SimpleWeb::StatusCode::client_error_bad_request, "bad index or offset");
       return;
     }
     auto snapshot = find_clipboard_snapshot(named_cert_p->uuid, get_arg(args, "snapshot", ""), current_stream_session(named_cert_p->uuid));
     if (!snapshot) {
-      fail(SimpleWeb::StatusCode::client_error_gone, "unknown file list");
+      refuse_clipboard_file(response, client, SimpleWeb::StatusCode::client_error_gone, "unknown file list");
       return;
     }
     // The files were listed with the rights of the user signed in then; nobody else gets them.
     if (snapshot->console_session != WTSGetActiveConsoleSessionId()) {
-      fail(SimpleWeb::StatusCode::client_error_gone, "the signed-in user changed since the list was made");
+      refuse_clipboard_file(response, client, SimpleWeb::StatusCode::client_error_gone, "the signed-in user changed since the list was made");
       return;
     }
     if (index >= snapshot->entries.size() || snapshot->entries[index].directory) {
-      fail(SimpleWeb::StatusCode::client_error_not_found, "no such file");
+      refuse_clipboard_file(response, client, SimpleWeb::StatusCode::client_error_not_found, "no such file");
       return;
     }
-    const auto &entry = snapshot->entries[index];
+    const platf::clipboard::file_list_entry entry = snapshot->entries[index];  // a copy for the worker
     if (offset > entry.size) {
-      fail(SimpleWeb::StatusCode::client_error_range_not_satisfiable, "offset past the end");
+      refuse_clipboard_file(response, client, SimpleWeb::StatusCode::client_error_range_not_satisfiable, "offset past the end");
       return;
     }
 
-    HANDLE file = INVALID_HANDLE_VALUE;
-    bool changed = false;
-    std::string error;
-    if (!run_as_console_user([&](HANDLE) {
-          file = platf::clipboard::open_listed_file(entry, changed, error);
-        })) {
-      error = "no user session";
-    }
-    if (file == INVALID_HANDLE_VALUE) {
-      fail(changed ? SimpleWeb::StatusCode::client_error_conflict : SimpleWeb::StatusCode::server_error_internal_server_error, error);
-      return;
-    }
     auto stream = std::make_shared<clipboard_file_stream_t>();
-    stream->file = file;
-    stream->client = named_cert_p->name;
+    stream->io = io;
+    stream->client = client;
     stream->index = index;
     stream->offset = offset;
     stream->length = entry.size - offset;
-    LARGE_INTEGER position;
-    position.QuadPart = static_cast<LONGLONG>(offset);
-    if (offset > 0 && !SetFilePointerEx(file, position, nullptr, FILE_BEGIN)) {
-      fail(SimpleWeb::StatusCode::server_error_internal_server_error, "cannot seek");
-      return;
-    }
-    stream->buffer.resize(static_cast<std::size_t>(std::min<std::uint64_t>(clipboard_file_chunk_bytes, std::max<std::uint64_t>(stream->length, 1))));
-    stream->response = response;
 
-    SimpleWeb::CaseInsensitiveMultimap headers;
-    headers.emplace("Content-Type", "application/octet-stream");
-    headers.emplace("Content-Length", std::to_string(stream->length));
-    // One file per connection, so an aborted transfer never leaves a half-sent body on a reused one.
-    response->close_connection_after_response = true;
-    response->write(SimpleWeb::StatusCode::success_ok, headers);
-    send_clipboard_file_chunk(stream);
+    // Opening and checking the file can stall on a network share, so the clipboard worker does it
+    // and the io thread then answers. named_cert_p is not used off the io thread.
+    clipboard_worker.post([stream, response = std::move(response), entry]() mutable {
+      bool changed = false;
+      std::string why;
+      try {
+        if (!run_as_console_user([&](HANDLE) {
+              stream->file = platf::clipboard::open_listed_file(entry, changed, why);
+            })) {
+          why = "no user session";
+        }
+      } catch (const std::exception &e) {
+        RevertToSelf();  // the job may have thrown while impersonating the console user
+        BOOST_LOG(error) << "Clipboard file job failed: " << e.what();
+        why = "cannot open file";
+      }
+      LARGE_INTEGER position;
+      position.QuadPart = static_cast<LONGLONG>(stream->offset);
+      if (stream->file != INVALID_HANDLE_VALUE && stream->offset > 0 && !SetFilePointerEx(stream->file, position, nullptr, FILE_BEGIN)) {
+        CloseHandle(stream->file);
+        stream->file = INVALID_HANDLE_VALUE;
+        changed = false;
+        why = "cannot seek";
+      }
+      boost::asio::post(*stream->io, [stream, response = std::move(response), changed, why]() {
+        if (stream->file == INVALID_HANDLE_VALUE) {
+          refuse_clipboard_file(response, stream->client, changed ? SimpleWeb::StatusCode::client_error_conflict : SimpleWeb::StatusCode::server_error_internal_server_error, why);
+          return;
+        }
+        stream->buffer.resize(static_cast<std::size_t>(std::min<std::uint64_t>(clipboard_file_chunk_bytes, std::max<std::uint64_t>(stream->length, 1))));
+        stream->response = response;
+
+        SimpleWeb::CaseInsensitiveMultimap headers;
+        headers.emplace("Content-Type", "application/octet-stream");
+        headers.emplace("Content-Length", std::to_string(stream->length));
+        // One file per connection, so an aborted transfer never leaves a half-sent body on a reused one.
+        response->close_connection_after_response = true;
+        response->write(SimpleWeb::StatusCode::success_ok, headers);
+        send_clipboard_file_chunk(stream, std::move(response));
+      });
+    });
   }
 #endif
 
@@ -2127,7 +2149,7 @@ namespace nvhttp {
       }
     }
     if (clipboard_type == "filedata"sv) {
-      send_clipboard_file(response, named_cert_p, args);
+      send_clipboard_file(response, named_cert_p, args, io);
       return;
     }
     if (clipboard_type == "filelist"sv) {
