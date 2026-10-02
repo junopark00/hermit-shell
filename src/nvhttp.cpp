@@ -751,7 +751,7 @@ namespace nvhttp {
           deviceName = "Legacy client";
         }
 
-        sess.client.uniqueID = std::move(uniqID);
+        sess.client.uniqueID = uniqID;  // Shell: copied, the PIN_STDIN path looks it up again below
         sess.client.name = std::move(deviceName);
         sess.client.cert = util::from_hex_vec(get_arg(args, "clientcert"), true);
 
