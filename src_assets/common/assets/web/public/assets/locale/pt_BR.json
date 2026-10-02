@@ -316,8 +316,6 @@
     "mouse_desc": "Permite que os convidados controlem o mouse do servidor",
     "native_pen_touch": "Suporte nativo a caneta/toque",
     "native_pen_touch_desc": "Quando ativado, o Shell transmitirá os eventos nativos de caneta/toque dos clientes Hermit. Isso pode ser útil desativar para aplicativos mais antigos sem suporte nativo a caneta/toque.",
-    "notify_pre_releases": "Notificações de pré-lançamento",
-    "notify_pre_releases_desc": "Se deseja ser notificado sobre novas versões de pré-lançamento do Shell",
     "nvenc_h264_cavlc": "Prefira o CAVLC ao CABAC em H.264",
     "nvenc_h264_cavlc_desc": "Forma mais simples de codificação de entropia. O CAVLC precisa de cerca de 10% a mais de taxa de bits para obter a mesma qualidade. Só é relevante para dispositivos de decodificação muito antigos.",
     "nvenc_intra_refresh": "Intra Refresh",

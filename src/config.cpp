@@ -598,7 +598,6 @@ namespace config {
     47989,  // Base port number
     "ipv4",  // Address family
     platf::appdata().string() + "/shell.log",  // log file
-    false,  // notify_pre_releases
     false,  // legacy_ordering
     true,  // system_tray
     {},  // prep commands
@@ -1310,7 +1309,6 @@ namespace config {
     bool_f(vars, "enable_pairing", shell.enable_pairing);
     bool_f(vars, "enable_discovery", shell.enable_discovery);
     bool_f(vars, "envvar_compatibility_mode", shell.envvar_compatibility_mode);
-    bool_f(vars, "notify_pre_releases", shell.notify_pre_releases);
     bool_f(vars, "legacy_ordering", shell.legacy_ordering);
     bool_f(vars, "forward_rumble", input.forward_rumble);
 

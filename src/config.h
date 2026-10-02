@@ -290,7 +290,6 @@ namespace config {
     std::string address_family;
 
     std::string log_file;
-    bool notify_pre_releases;
     bool legacy_ordering;
     bool system_tray;
     std::vector<prep_cmd_t> prep_cmds;

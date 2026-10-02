@@ -316,8 +316,6 @@
     "mouse_desc": "Tillåter gäster att styra värdsystemet med musen",
     "native_pen_touch": "Inbyggt stöd för penna/tryck",
     "native_pen_touch_desc": "När aktiverad kommer Shell att skicka vidare inbyggda penna/touch-händelser från Hermit-klienter. Detta kan vara användbart att inaktivera för äldre applikationer utan inbyggt stöd för penna/touch.",
-    "notify_pre_releases": "Notiser för förhandsversioner",
-    "notify_pre_releases_desc": "Huruvida du meddelas om nya förhandsversioner av Shell",
     "nvenc_h264_cavlc": "Föredra CAVLC över CABAC i H.264",
     "nvenc_h264_cavlc_desc": "Enklare form av entropi-omkodning. CAVLC behöver cirka 10% mer bithastighet för samma kvalitet. Endast relevant för riktigt gamla avkodningsenheter.",
     "nvenc_intra_refresh": "Intra-uppdatering",

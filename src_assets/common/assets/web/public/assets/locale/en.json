@@ -364,8 +364,6 @@
     "mouse_desc": "Allows guests to control the host system with the mouse",
     "native_pen_touch": "Native Pen/Touch Support",
     "native_pen_touch_desc": "When enabled, Shell passes through native pen/touch events from clients. Disable it for older applications without native pen/touch support.",
-    "notify_pre_releases": "PreRelease Notifications",
-    "notify_pre_releases_desc": "Whether to be notified of new pre-release versions of Shell",
     "nvenc_h264_cavlc": "Prefer CAVLC over CABAC in H.264",
     "nvenc_h264_cavlc_desc": "Simpler form of entropy coding. CAVLC needs around 10% more bitrate for same quality. Only relevant for really old decoding devices.",
     "nvenc_intra_refresh": "Intra Refresh",

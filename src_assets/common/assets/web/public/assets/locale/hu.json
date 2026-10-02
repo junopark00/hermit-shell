@@ -271,8 +271,6 @@
     "mouse_desc": "Lehetővé teszi a vendégek számára, hogy az egérrel irányítsák a gazdarendszert.",
     "native_pen_touch": "Natív toll/érintés támogatás",
     "native_pen_touch_desc": "Ha engedélyezve van, a Shell átadja a Hermit-ügyfelek natív toll/érintés eseményeit. Ezt hasznos lehet letiltani a régebbi, natív toll/érintés támogatással nem rendelkező alkalmazások esetében.",
-    "notify_pre_releases": "Kiadás előtti értesítések",
-    "notify_pre_releases_desc": "Akar-e értesítést kapni a Shell új, kiadás előtti verzióiról?",
     "nvenc_h264_cavlc": "A CAVLC előnyben részesítése a CABAC-kal szemben a H.264-ben",
     "nvenc_h264_cavlc_desc": "Az entrópia kódolás egyszerűbb formája. A CAVLC-nek körülbelül 10%-kal több bitrátára van szüksége ugyanahhoz a minőséghez. Csak nagyon régi dekódoló eszközök esetében releváns.",
     "nvenc_latency_over_power": "Az alacsonyabb kódolási késleltetés előnyben részesítése az energiatakarékossággal szemben",

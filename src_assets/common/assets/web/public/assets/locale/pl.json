@@ -261,8 +261,6 @@
     "mouse_desc": "Umożliwia gościom kontrolowanie systemu hosta za pomocą myszy",
     "native_pen_touch": "Natywna obsługa pióra/dotyku",
     "native_pen_touch_desc": "Po włączeniu Shell będzie przekazywać natywne zdarzenia pióra/dotyku z klienta Hermit. Może to być przydatne do wyłączenia w starszych aplikacjach bez natywnej obsługi pióra/dotyku.",
-    "notify_pre_releases": "Powiadomienia o wydaniu wstępnym",
-    "notify_pre_releases_desc": "Czy otrzymywać powiadomienia o nowych przedpremierowych wersjach Shell",
     "nvenc_h264_cavlc": "Preferowanie CAVLC nad CABAC w H.264",
     "nvenc_h264_cavlc_desc": "Prostsza forma kodowania entropijnego. CAVLC wymaga około 10% więcej bitrate dla tej samej jakości. Dotyczy tylko naprawdę starych urządzeń dekodujących.",
     "nvenc_latency_over_power": "Niższe opóźnienie kodowania przedkładane nad oszczędność energii",

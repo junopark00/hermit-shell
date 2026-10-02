@@ -364,8 +364,6 @@
     "mouse_desc": "게스트가 마우스로 호스트를 조작할 수 있습니다.",
     "native_pen_touch": "기본 펜/터치 지원",
     "native_pen_touch_desc": "켜면 클라이언트의 펜/터치 이벤트를 그대로 전달합니다. 펜/터치를 지원하지 않는 오래된 앱에서는 끄는 것이 나을 수 있습니다.",
-    "notify_pre_releases": "사전 릴리스 알림",
-    "notify_pre_releases_desc": "Shell의 새 사전 출시 버전에 대한 알림 여부",
     "nvenc_h264_cavlc": "H.264에서 CABAC보다 CAVLC 선호",
     "nvenc_h264_cavlc_desc": "더 간단한 형태의 엔트로피 코딩. CAVLC는 동일한 화질을 위해 약 10% 더 많은 비트 전송률이 필요합니다. 아주 오래된 디코딩 장치에만 해당됩니다.",
     "nvenc_intra_refresh": "인트라 리프레시",

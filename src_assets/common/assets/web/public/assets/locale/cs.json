@@ -271,8 +271,6 @@
     "mouse_desc": "Umožňuje hostům ovládat systém pomocí myši",
     "native_pen_touch": "Nativní podpora pera/dotyku",
     "native_pen_touch_desc": "Je-li tato funkce povolena, bude Shell předávat nativní události pera/dotyku z klientů Hermit. To může být užitečné vypnout pro starší aplikace bez nativní podpory pera/dotyku.",
-    "notify_pre_releases": "Oznámení před vydáním",
-    "notify_pre_releases_desc": "Zda chcete být informováni o nových předběžných verzích Shell",
     "nvenc_h264_cavlc": "Preferovat CAVLC před CABAC v H.264",
     "nvenc_h264_cavlc_desc": "Jednodušší forma entropického kódování. CAVLC potřebuje pro stejnou kvalitu přibližně o 10 % vyšší datový tok. Má význam pouze pro opravdu stará dekódovací zařízení.",
     "nvenc_latency_over_power": "Preferovat nižší latenci kódování před úsporami energie",

@@ -271,8 +271,6 @@
     "mouse_desc": "Cho phép khách truy cập điều khiển hệ thống chủ bằng chuột.",
     "native_pen_touch": "Hỗ trợ bút cảm ứng và chạm gốc",
     "native_pen_touch_desc": "Khi được bật, Shell sẽ truyền các sự kiện bút/chạm gốc từ các ứng dụng Hermit. Tính năng này có thể hữu ích để tắt cho các ứng dụng cũ không hỗ trợ bút/chạm gốc.",
-    "notify_pre_releases": "Thông báo trước khi phát hành",
-    "notify_pre_releases_desc": "Có muốn nhận thông báo về các phiên bản thử nghiệm mới của Shell không?",
     "nvenc_h264_cavlc": "Ưu tiên CAVLC hơn CABAC trong H.264",
     "nvenc_h264_cavlc_desc": "Hình thức đơn giản hơn của mã hóa entropy. CAVLC cần khoảng 10% băng thông bit cao hơn để đạt được chất lượng tương đương. Chỉ áp dụng cho các thiết bị giải mã rất cũ.",
     "nvenc_latency_over_power": "Ưu tiên độ trễ mã hóa thấp hơn so với tiết kiệm năng lượng.",
