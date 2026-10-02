@@ -751,7 +751,7 @@ namespace nvhttp {
           deviceName = "Legacy client";
         }
 
-        sess.client.uniqueID = uniqID;  // Shell: copied, the PIN_STDIN path looks it up again below
+        sess.client.uniqueID = std::move(uniqID);
         sess.client.name = std::move(deviceName);
         sess.client.cert = util::from_hex_vec(get_arg(args, "clientcert"), true);
 
@@ -771,7 +771,9 @@ namespace nvhttp {
           std::cout << "Please insert pin: "sv;
           std::getline(std::cin, pin);
 
+          // Shell: answered here; the phase checks below are for the later requests
           getservercert(ptr->second, tree, pin);
+          return;
         } else {
 #if defined SHELL_TRAY && SHELL_TRAY >= 1
           system_tray::update_tray_require_pin();
