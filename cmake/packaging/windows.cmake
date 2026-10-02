@@ -126,6 +126,6 @@ set(CPACK_COMPONENT_GAMEPAD_DISPLAY_NAME "Virtual Gamepad")
 set(CPACK_COMPONENT_GAMEPAD_DESCRIPTION "Scripts to install and uninstall Virtual Gamepad.")
 set(CPACK_COMPONENT_GAMEPAD_GROUP "Scripts")
 
-# include specific packaging
-include(${CMAKE_MODULE_PATH}/packaging/windows_nsis.cmake)
-include(${CMAKE_MODULE_PATH}/packaging/windows_wix.cmake)
+# Shell: only the portable ZIP is built. shell\Install-Shell.ps1 installs it and sets up what an
+# installer package would miss (ShellService, the Ctrl+Alt+Del policy, credential folder permissions).
+set(CPACK_GENERATOR "ZIP")
