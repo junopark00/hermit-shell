@@ -61,6 +61,15 @@ editor.
   permission bit set (the values of the `PERM` enum in `src/crypto.h`, masked with `_all`; full access is
   `0x071F1F00`). Without it the first paired device gets every permission and later ones list and view,
   as before.
+- `POST /api/pin` replies `{"status": <bool>, "reason": "<reason>"}`. The host cannot tell a wrong PIN
+  when it is entered: it hands the PIN to the device, which checks it and then finishes the pairing or,
+  for a wrong PIN, ends it. So `sent` (`status` true) means the PIN reached the waiting device, not
+  that it is paired; the page says so, asks to start pairing again on the device if it reports a wrong
+  PIN, and reloads the device list 3 and 10 seconds later so a finished pairing shows up. The other
+  reasons (`status` false) are `no-client` (no device is waiting for a PIN), `invalid-pin` (not four
+  digits) and `failed` (the waiting device's request was invalid; it was told pairing failed).
+- A device that starts pairing again replaces its earlier unfinished attempt (after a wrong PIN or a
+  dropped connection), so a wrong PIN never blocks the next try.
 - **Prefill for companion clients**: Hermit and Hermit for Android open
   `https://<host>:47990/pin#pin=1234&name=<URL-encoded device name>`. The fragment never leaves the
   browser; the page fills the fields from it, focuses the **Pair** button and removes the fragment from

@@ -401,7 +401,6 @@
   "pin": {
     "device_name": "Nome do dispositivo",
     "pair_failure": "Pareamento Falhou: Verifique se o PIN foi digitado corretamente",
-    "pair_success": "Sucesso! Por favor, verifique a Lua Lunar para continuar",
     "send": "Mandar",
     "warning_msg": "Certifique-se de que você tem acesso ao cliente com o qual está emparelhando. Este software pode dar controle total ao seu computador, então tenha cuidado!"
   },

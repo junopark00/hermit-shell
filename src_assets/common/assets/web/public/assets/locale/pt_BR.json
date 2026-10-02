@@ -482,7 +482,6 @@
     "display_mode_override_desc": "Shell vai ignorar o modo de monitor solicitado pelo cliente e usar esse valor para configurar os monitores (virtuais). Deixe em branco para correspondência automática. Formato: [Largura]x[Altura]x[FPS]",
     "display_mode_override_error": "Substituição de modo inválido. Formato: [Largura]x[Altura]x[FPS]",
     "pair_failure": "Falha no pareamento: Verifique se o PIN foi digitado corretamente",
-    "pair_success": "Sucesso! Por favor, verifique o Hermit para continuar",
     "send": "Enviar",
     "warning_msg": "Certifique-se de ter acesso ao cliente com o qual está fazendo o pareamento. Esse software pode dar controle total ao seu computador, portanto, tenha cuidado!",
     "device_management": "Gerenciamento de Dispositivos",

@@ -424,7 +424,6 @@
   "pin": {
     "device_name": "Nombre del dispositivo",
     "pair_failure": "Falló el emparejamiento: Compruebe si el PIN está escrito correctamente",
-    "pair_success": "¡Éxito! Por favor revise Hermit para continuar",
     "send": "Enviar",
     "warning_msg": "Asegúrate de tener acceso al cliente con el que estás emparejando. Este software puede dar control total a tu computadora, ¡así que ten cuidado!"
   },

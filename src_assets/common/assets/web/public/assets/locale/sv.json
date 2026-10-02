@@ -482,7 +482,6 @@
     "display_mode_override_desc": "Shell kommer att ignorera klientens begärda visningsläge och använda detta värde för att konfigurera (virtuella) skärmar. Lämna tomt för automatisk matchning. Format: [Bredd]x[Höjd]x[FPS]",
     "display_mode_override_error": "Ogiltigt åsidosättningsläge. Format: [Bredd]x[Höjd]x[FPS]",
     "pair_failure": "Parkoppling misslyckades: Kontrollera om PIN-koden är korrekt inskriven",
-    "pair_success": "Lyckades! Kontrollera Hermit för att fortsätta",
     "send": "Skicka",
     "warning_msg": "Försäkra dig om att du har tillgång till klienten du parkopplar med. Denna programvara kan ge total kontroll över din dator, så var försiktig!",
     "device_management": "Enhetshantering",

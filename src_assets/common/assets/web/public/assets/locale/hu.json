@@ -409,7 +409,6 @@
   "pin": {
     "device_name": "Eszköz neve",
     "pair_failure": "A párosítás sikertelen: Ellenőrizze, hogy a PIN kód helyesen lett-e beírva",
-    "pair_success": "Siker! Kérjük, ellenőrizze a Holdfényt a folytatáshoz",
     "send": "Küldés",
     "warning_msg": "Győződjön meg róla, hogy hozzáférése van a párosított ügyfélhez. Ez a szoftver teljes irányítást adhat a számítógépének, ezért legyen óvatos!"
   },

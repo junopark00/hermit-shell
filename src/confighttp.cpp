@@ -1493,6 +1493,12 @@ namespace confighttp {
    * `PERM::_all` like in updateClient. Without it the first paired device gets every permission and
    * later ones the default (list and view).
    *
+   * Shell: the reply is `{"status": <bool>, "reason": "<reason>"}`. `status` is true only for the
+   * reason `sent`: the PIN reached the waiting device, which checks it and finishes (or, for a
+   * wrong PIN, ends) the pairing itself. The other reasons are `no-client` (no device is waiting
+   * for a PIN), `invalid-pin` (not four digits) and `failed` (the waiting device's request was
+   * invalid).
+   *
    * @api_examples{/api/pin| POST| {"pin":"1234","name":"My PC","perm":119480064}}
    */
   void savePin(resp_https_t response, req_https_t request) {
@@ -1514,7 +1520,22 @@ namespace confighttp {
       if (auto it = input_tree.find("perm"); it != input_tree.end() && !it->is_null()) {
         perm = static_cast<crypto::PERM>(it->get<uint32_t>() & static_cast<uint32_t>(crypto::PERM::_all));
       }
-      output_tree["status"] = nvhttp::pin(pin, name, perm);
+      auto result = nvhttp::pin(pin, name, perm);
+      output_tree["status"] = result == nvhttp::pin_result_e::sent;
+      switch (result) {
+        case nvhttp::pin_result_e::sent:
+          output_tree["reason"] = "sent";
+          break;
+        case nvhttp::pin_result_e::no_client:
+          output_tree["reason"] = "no-client";
+          break;
+        case nvhttp::pin_result_e::invalid_pin:
+          output_tree["reason"] = "invalid-pin";
+          break;
+        case nvhttp::pin_result_e::failed:
+          output_tree["reason"] = "failed";
+          break;
+      }
       send_response(response, output_tree);
     } catch (std::exception &e) {
       BOOST_LOG(warning) << "SavePin: "sv << e.what();

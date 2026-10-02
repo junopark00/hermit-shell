@@ -186,18 +186,30 @@ namespace nvhttp {
   void clientpairingsecret(pair_session_t &sess, boost::property_tree::ptree &tree, const std::string &client_pairing_secret);
 
   /**
-   * @brief Compare the user supplied pin to the client pin.
+   * @brief Shell: what became of a PIN entered in the web UI.
+   * @details The host cannot tell a wrong PIN at this point: the client finds out when it checks
+   * the host's reply and then ends the pairing, so `sent` does not mean paired.
+   */
+  enum class pin_result_e {
+    sent,  ///< handed to the client that is waiting for it
+    no_client,  ///< no client is waiting for a PIN
+    invalid_pin,  ///< not four digits
+    failed,  ///< the waiting client's pairing request was invalid; it was told that pairing failed
+  };
+
+  /**
+   * @brief Hand the user supplied pin to the client waiting for it.
    * @param pin The user supplied pin.
    * @param name The user supplied name.
    * @param perm Shell: the permissions the paired device gets, already masked with `PERM::_all`.
    *             Without it the first device gets every permission and later ones `PERM::_default`.
-   * @return `true` if the pin is correct, `false` otherwise.
+   * @return Shell: whether the pin reached a waiting client (see pin_result_e).
    * @examples
-   * bool pin_status = nvhttp::pin("1234", "laptop");
-   * bool pin_status = nvhttp::pin("1234", "laptop", crypto::PERM::_all);
+   * auto result = nvhttp::pin("1234", "laptop");
+   * auto result = nvhttp::pin("1234", "laptop", crypto::PERM::_all);
    * @examples_end
    */
-  bool pin(std::string pin, std::string name, std::optional<crypto::PERM> perm = std::nullopt);
+  pin_result_e pin(std::string pin, std::string name, std::optional<crypto::PERM> perm = std::nullopt);
 
   /**
    * @brief Remove single client.

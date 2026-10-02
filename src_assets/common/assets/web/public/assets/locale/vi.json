@@ -409,7 +409,6 @@
   "pin": {
     "device_name": "Tên thiết bị",
     "pair_failure": "Kết nối không thành công: Vui lòng kiểm tra xem mã PIN đã được nhập chính xác chưa.",
-    "pair_success": "Thành công! Vui lòng kiểm tra Hermit để tiếp tục.",
     "send": "Gửi",
     "warning_msg": "Đảm bảo bạn có quyền truy cập vào máy tính mà bạn đang kết nối. Phần mềm này có thể cho phép kiểm soát hoàn toàn máy tính của bạn, vì vậy hãy cẩn thận!"
   },

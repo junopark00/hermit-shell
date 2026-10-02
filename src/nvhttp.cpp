@@ -810,10 +810,10 @@ namespace nvhttp {
     }
   }
 
-  bool pin(std::string pin, std::string name, std::optional<crypto::PERM> perm) {
+  pin_result_e pin(std::string pin, std::string name, std::optional<crypto::PERM> perm) {
     pt::ptree tree;
     if (map_id_sess.empty()) {
-      return false;
+      return pin_result_e::no_client;
     }
 
     // ensure pin is 4 digits
@@ -824,7 +824,7 @@ namespace nvhttp {
         "root.<xmlattr>.status_message",
         std::format("Pin must be 4 digits, {} provided", pin.size())
       );
-      return false;
+      return pin_result_e::invalid_pin;
     }
 
     // ensure all pin characters are numeric
@@ -832,7 +832,7 @@ namespace nvhttp {
       tree.put("root.paired", 0);
       tree.put("root.<xmlattr>.status_code", 400);
       tree.put("root.<xmlattr>.status_message", "Pin must be numeric");
-      return false;
+      return pin_result_e::invalid_pin;
     }
 
     // Shell: the session whose client is waiting for the PIN. A session already past getservercert
@@ -846,7 +846,7 @@ namespace nvhttp {
     });
     if (sess_it == std::end(map_id_sess)) {
       BOOST_LOG(warning) << "No client is waiting for a pin";
-      return false;
+      return pin_result_e::no_client;
     }
     auto &sess = sess_it->second;
 
@@ -864,7 +864,9 @@ namespace nvhttp {
     // pointer the session keeps between PINs. sess is not used after getservercert.
     auto async_response = std::move(sess.async_insert_pin.response);
     getservercert(sess, tree, pin);
-    bool paired = tree.get<int>("root.<xmlattr>.status_code", 0) == 200;
+    // Shell: 200 only means the client got the reply it checks the PIN with; a wrong PIN shows
+    // when the client ends the pairing, after this returns.
+    bool sent = tree.get<int>("root.<xmlattr>.status_code", 0) == 200;
 
     // response to the request for pin
     std::ostringstream data;
@@ -877,7 +879,7 @@ namespace nvhttp {
     }
 
     // response to the current request
-    return paired;
+    return sent ? pin_result_e::sent : pin_result_e::failed;
   }
 
   template<class T>

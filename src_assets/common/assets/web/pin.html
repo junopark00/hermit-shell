@@ -54,7 +54,7 @@
         </div>
         <button class="btn btn-primary mt-4" ref="pairButton" :disabled="pairPending">{{ $t('pin.send') }}</button>
       </div>
-      <div v-if="pairStatus" class="alert" :class="pairStatus === 'success' ? 'alert-success' : 'alert-danger'" role="alert">{{ pairMessage }}</div>
+      <div v-if="pairStatus" class="alert" :class="'alert-' + pairStatus" role="alert">{{ pairMessage }}</div>
     </form>
     <div class="alert alert-warning">
       <b>{{ $t('_common.warning') }}</b> {{ $t('pin.warning_msg') }}
@@ -485,13 +485,25 @@
         })
           .then((response) => response.json())
           .then((response) => {
-            if (response.status === true) {
-              this.pairStatus = 'success';
-              this.pairMessage = this.i18n.t('pin.pair_success', { perm: this.permissionSummary(perm) });
+            // The host only hands the PIN over: the device checks it and finishes the pairing (or,
+            // for a wrong PIN, ends it) on its own, so success shows up later in the device list.
+            if (response.status === true && response.reason === 'sent') {
+              this.pairStatus = 'info';
+              this.pairMessage = this.i18n.t('pin.pair_sent', { perm: this.permissionSummary(perm) });
               this.pin = '';
               this.deviceName = '';
 
-              setTimeout(() => this.refreshClients(), 1000);
+              // A device being edited is left alone (refreshing would discard the edit)
+              for (const delay of [3000, 10000]) {
+                setTimeout(() => {
+                  if (!currentEditingClient) {
+                    this.refreshClients();
+                  }
+                }, delay);
+              }
+            } else if (response.reason === 'no-client') {
+              this.pairStatus = 'warning';
+              this.pairMessage = this.i18n.t('pin.pair_no_client');
             } else {
               this.pairStatus = 'danger';
               this.pairMessage = this.i18n.t('pin.pair_failure');
