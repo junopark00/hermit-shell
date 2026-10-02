@@ -588,7 +588,11 @@ namespace platf::clipboard {
       error = "not an APCF v1 archive";
       return false;
     }
-    if (count == 0 || count > max_file_entries) {
+    if (count == 0) {
+      error = "empty archive";  // malformed (400), not over a limit
+      return false;
+    }
+    if (count > max_file_entries) {
       error = "entry count out of range";
       return false;
     }
