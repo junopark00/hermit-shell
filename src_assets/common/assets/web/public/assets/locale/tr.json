@@ -402,7 +402,6 @@
     "device_name": "Cihaz Adı",
     "pair_failure": "Eşleştirme Başarısız: PIN'in doğru yazılıp yazılmadığını kontrol edin",
     "pair_success": "Başarılı! Devam etmek için lütfen Hermit'ı kontrol edin",
-    "pin_pairing": "PIN Eşleştirme",
     "send": "Gönder",
     "warning_msg": "Eşleştirdiğiniz istemciye erişiminiz olduğundan emin olun. Bu yazılım bilgisayarınıza tam kontrol sağlayabilir, bu yüzden dikkatli olun!"
   },

@@ -402,7 +402,6 @@
     "device_name": "Gerätename",
     "pair_failure": "Paarung fehlgeschlagen: Prüfen Sie, ob die PIN korrekt eingegeben wurde",
     "pair_success": "Erfolg! Weiter geht es in Hermit",
-    "pin_pairing": "PIN Pairing",
     "send": "Senden",
     "warning_msg": "Stellen Sie sicher, dass Sie Zugriff auf den Client haben, mit dem Sie sich verbinden. Diese Software kann Ihrem Computer die totale Kontrolle geben, also seien Sie vorsichtig!"
   },

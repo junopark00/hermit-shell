@@ -410,7 +410,6 @@
     "device_name": "Název zařízení",
     "pair_failure": "Spárování se nezdařilo: Zkontrolujte, zda je PIN správně zadán",
     "pair_success": "Úspěch! Prosím, zkontrolujte Hermit pro pokračování",
-    "pin_pairing": "Párování PIN",
     "send": "Odeslat",
     "warning_msg": "Ujistěte se, že máte přístup ke klientovi, se kterým se párujete. Tento software může dát počítači úplnou kontrolu, proto buďte opatrní!"
   },

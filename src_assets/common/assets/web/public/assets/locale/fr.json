@@ -402,7 +402,6 @@
     "device_name": "Nom de l'appareil",
     "pair_failure": "Échec de l'appairage : Vérifiez si le code PIN est correctement saisi",
     "pair_success": "Succès ! Veuillez vérifier Hermit pour continuer",
-    "pin_pairing": "Appairage par code PIN",
     "send": "Envoyer",
     "warning_msg": "Assurez-vous que vous avez accès au client avec lequel vous appariez. Ce logiciel peut donner un contrôle total à votre ordinateur, alors soyez prudent !"
   },

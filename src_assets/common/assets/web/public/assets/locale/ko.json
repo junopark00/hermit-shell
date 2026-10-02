@@ -579,8 +579,6 @@
     "pair_perm_view": "보기만",
     "pair_perm_view_desc": "앱 목록 보기와 스트림 보기만 허용합니다. 이 기기는 입력을 보낼 수 없습니다.",
     "pair_success": "페어링했습니다. 권한: {perm}. 필요하면 아래 기기 목록에서 바꿀 수 있습니다.",
-    "pair_success_check_perm": "페어링했습니다! 아래에서 클라이언트에 필요한 권한을 직접 부여해 주세요.",
-    "pin_pairing": "PIN 페어링",
     "pin_placeholder": "PIN 4자리",
     "send": "페어링",
     "warning_msg": "직접 사용하는 기기만 페어링하세요. 페어링한 기기는 이 컴퓨터를 원격으로 조작할 수 있습니다.",

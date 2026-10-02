@@ -404,7 +404,6 @@
     "device_name": "Device Name",
     "pair_failure": "Pairing Failed: Check if the PIN is typed correctly",
     "pair_success": "Success! Please check Hermit to continue",
-    "pin_pairing": "PIN Pairing",
     "send": "Send",
     "warning_msg": "Make sure you have access to the client you are pairing with. This software can give total control to your computer, so be careful!"
   },

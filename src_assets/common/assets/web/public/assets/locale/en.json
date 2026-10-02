@@ -565,8 +565,6 @@
     "pair_perm_view": "View only",
     "pair_perm_view_desc": "Grants listing apps and viewing streams only; the device cannot send input.",
     "pair_success": "Paired. Permissions: {perm}. Change them in the device list below if needed.",
-    "pair_success_check_perm": "Pair success! Please grant necessary permissions to the client manually below.",
-    "pin_pairing": "PIN Pairing",
     "pin_placeholder": "4-digit PIN",
     "send": "Pair",
     "warning_msg": "Only pair devices you use yourself. A paired device can control this computer remotely.",

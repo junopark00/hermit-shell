@@ -410,7 +410,6 @@
     "device_name": "裝置名稱",
     "pair_failure": "配對失敗：請確認 PIN 碼是否輸入正確",
     "pair_success": "成功！請檢查 Hermit 來繼續",
-    "pin_pairing": "PIN 碼配對",
     "send": "發送",
     "warning_msg": "請確保您可以存取要配對的用戶端。此軟體可讓對方完全控制您的電腦，請小心使用！"
   },
