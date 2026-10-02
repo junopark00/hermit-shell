@@ -52,7 +52,7 @@
             </button>
           </div>
         </div>
-        <button class="btn btn-primary mt-4" ref="pairButton">{{ $t('pin.send') }}</button>
+        <button class="btn btn-primary mt-4" ref="pairButton" :disabled="pairPending">{{ $t('pin.send') }}</button>
       </div>
       <div v-if="pairStatus" class="alert" :class="pairStatus === 'success' ? 'alert-success' : 'alert-danger'" role="alert">{{ pairMessage }}</div>
     </form>
@@ -402,6 +402,7 @@
       pairing: { editPerm: preset ? preset.perm : choice.custom },
       pairCustomPerm: choice.custom,
       showPairToggles: false,
+      pairPending: false,  // Shell: one PIN request at a time; a second one would fail the pairing
       clients: [],
       clientsError: false,
       notice: null,
@@ -468,6 +469,10 @@
         }, NOTICE_MS);
       },
       registerDevice() {
+        if (this.pairPending) {
+          return;
+        }
+        this.pairPending = true;
         this.pairStatus = '';
         const perm = this.pairing.editPerm & permissionMapping._all;
         fetch("./api/pin", {
@@ -495,6 +500,9 @@
           .catch(() => {
             this.pairStatus = 'danger';
             this.pairMessage = this.i18n.t('pin.pair_failure');
+          })
+          .finally(() => {
+            this.pairPending = false;
           });
       },
       addCmd(arr, idx) {

@@ -829,8 +829,20 @@ namespace nvhttp {
       return false;
     }
 
-    auto &sess = std::begin(map_id_sess)->second;
-    getservercert(sess, tree, pin);
+    // Shell: the session whose client is waiting for the PIN. A session already past getservercert
+    // (Pair pressed twice while a client is mid-pairing) or without a request to answer is passed
+    // over: getservercert would fail it, and fail_pair erases the session a reference points to.
+    auto has_response = [](const auto &response) {
+      return (response.has_left() && response.left()) || (response.has_right() && response.right());
+    };
+    auto sess_it = std::find_if(std::begin(map_id_sess), std::end(map_id_sess), [&](const auto &entry) {
+      return entry.second.last_phase == PAIR_PHASE::NONE && has_response(entry.second.async_insert_pin.response);
+    });
+    if (sess_it == std::end(map_id_sess)) {
+      BOOST_LOG(warning) << "No client is waiting for a pin";
+      return false;
+    }
+    auto &sess = sess_it->second;
 
     if (!name.empty()) {
       sess.client.name = name;
@@ -841,23 +853,25 @@ namespace nvhttp {
       sess.client.perm = *perm & PERM::_all;
     }
 
+    // The client's request is answered either way, so take it out of the session first: when the
+    // salt is bad, getservercert erases the session, and sess with it. Moving out leaves the null
+    // pointer the session keeps between PINs. sess is not used after getservercert.
+    auto async_response = std::move(sess.async_insert_pin.response);
+    getservercert(sess, tree, pin);
+    bool paired = tree.get<int>("root.<xmlattr>.status_code", 0) == 200;
+
     // response to the request for pin
     std::ostringstream data;
     pt::write_xml(data, tree);
 
-    auto &async_response = sess.async_insert_pin.response;
-    if (async_response.has_left() && async_response.left()) {
+    if (async_response.has_left()) {
       async_response.left()->write(data.str());
-    } else if (async_response.has_right() && async_response.right()) {
-      async_response.right()->write(data.str());
     } else {
-      return false;
+      async_response.right()->write(data.str());
     }
 
-    // reset async_response
-    async_response = std::decay_t<decltype(async_response.left())>();
     // response to the current request
-    return true;
+    return paired;
   }
 
   template<class T>
