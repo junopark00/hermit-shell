@@ -292,7 +292,7 @@ const RECOVERY_WINDOW_MS = 60000;
 const RECOVERY_MIN_SPAN_MS = 50000;
 const END_REASONS = ['disconnect', 'timeout', 'host', 'app_exit', 'client_quit'];
 // The permissions pin.html shows as toggles, counted the same way: list is implied by view or
-// launch and view by launch (pin.html shows them as on). File transfer bits have no toggle there.
+// launch and view by launch (pin.html shows them as on), plus the file upload and download toggles.
 const PERMISSIONS = [
   { bit: 0x01000000, impliedBy: 0x06000000 },  // list
   { bit: 0x02000000, impliedBy: 0x04000000 },  // view
