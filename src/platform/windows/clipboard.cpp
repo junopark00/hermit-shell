@@ -352,6 +352,23 @@ namespace platf::clipboard {
     return encode_png(factory.Get(), frame.Get());
   }
 
+  bool png_size(const std::string &png, std::uint32_t &width, std::uint32_t &height) {
+    // Signature (8 bytes), then the IHDR chunk: length (4), "IHDR", width and height (big-endian).
+    if (png.size() < 24 || png.compare(0, 8, "\x89PNG\r\n\x1a\n", 8) != 0 || png.compare(12, 4, "IHDR") != 0) {
+      return false;
+    }
+    auto be32 = [&png](std::size_t at) {
+      std::uint32_t v = 0;
+      for (std::size_t i = 0; i < 4; ++i) {
+        v = (v << 8) | static_cast<std::uint8_t>(png[at + i]);
+      }
+      return v;
+    };
+    width = be32(16);
+    height = be32(20);
+    return true;
+  }
+
   std::string png_to_dibv5(const std::string &png) {
     if (png.empty() || png.size() > max_image_bytes) {
       return {};

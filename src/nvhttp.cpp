@@ -2065,7 +2065,10 @@ namespace nvhttp {
     bool success = false;
 #ifdef _WIN32
     if (clipboard_type == "image"sv) {
-      if (content.size() > platf::clipboard::max_image_bytes) {
+      // 413 for an image over the byte or pixel limit, so clients can say it is too large
+      std::uint32_t width = 0, height = 0;
+      if (content.size() > platf::clipboard::max_image_bytes ||
+          (platf::clipboard::png_size(content, width, height) && static_cast<std::uint64_t>(width) * height > platf::clipboard::max_image_pixels)) {
         response->write(SimpleWeb::StatusCode::client_error_payload_too_large);
         response->close_connection_after_response = true;
         return;

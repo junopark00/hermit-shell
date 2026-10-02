@@ -42,6 +42,12 @@ namespace platf::clipboard {
   /// Converts a packed DIB (BITMAPINFOHEADER-family header, optional masks/palette, pixels) to PNG.
   std::string dib_to_png(const std::string &dib);
 
+  /**
+   * @brief Width and height from a PNG's IHDR chunk, without decoding it.
+   * @return False if the data does not start like a PNG.
+   */
+  bool png_size(const std::string &png, std::uint32_t &width, std::uint32_t &height);
+
   /// Converts a PNG to a bottom-up 32-bit BI_BITFIELDS CF_DIBV5 block. Empty on failure.
   std::string png_to_dibv5(const std::string &png);
 

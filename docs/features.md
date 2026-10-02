@@ -138,6 +138,8 @@ The upstream `/actions/clipboard` endpoint carries text only. On Windows Shell a
 | `GET type=filedata&snapshot=<id>&index=<n>[&offset=<bytes>]` | The bytes of one file from that list | Clipboard read plus file download |
 
 - `POST` replies with the new change number (`seq=`), so a client does not read back what it wrote.
+- `POST type=image` answers 413 when the PNG is over 32 MB or has more than 8192 × 8192 pixels
+  (width × height, read from its header).
 - Received files are checked first (paths, duplicates, size), then extracted with the signed-in user's
   rights to `%LOCALAPPDATA%\Temp\ShellClipboard` and placed on the clipboard as CF_HDROP ("copy").
   Files that are sent are read with the user's rights; links and junctions are not followed.

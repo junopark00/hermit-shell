@@ -162,6 +162,18 @@ int main() {
     check("truncated PNG", cb::png_to_dibv5(png.substr(0, png.size() / 2)).empty());
   }
   check("PNG over the size limit", cb::png_to_dibv5(std::string(cb::max_image_bytes + 1, 'x')).empty());
+  {
+    std::uint32_t width = 0, height = 0;
+    std::string png = cb::dib_to_png(make_dib(3, 2, 24, pixels));
+    check("PNG size read from IHDR", cb::png_size(png, width, height) && width == 3 && height == 2);
+    check("no PNG size for other data", !cb::png_size("definitely not a png file", width, height));
+    // Claim 8193 x 8192 pixels in IHDR: png_size reports it, the conversion refuses it.
+    std::string big = png;
+    const unsigned char dims[8] = {0, 0, 0x20, 0x01, 0, 0, 0x20, 0x00};
+    std::memcpy(big.data() + 16, dims, sizeof(dims));
+    check("PNG size of an oversized header", cb::png_size(big, width, height) && width == 8193 && height == 8192);
+    check("PNG over the pixel limit", static_cast<std::uint64_t>(width) * height > cb::max_image_pixels && cb::png_to_dibv5(big).empty());
+  }
 
   std::printf("Path validation\n");
   for (const char *ok : {"a.txt", "folder/b.bin", "한글/파일.txt", "a/b/c/d", "name with spaces.txt"}) {
