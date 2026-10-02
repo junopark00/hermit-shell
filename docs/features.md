@@ -74,11 +74,13 @@ editor.
   a newer pairing attempt") instead of being left to time out.
 - A device waits up to 5 minutes for the PIN. Its request then times out (the HTTP server's
   300-second limit) and Shell drops the attempt, so a PIN entered later never goes to a device that
-  gave up; start pairing again on the device. With several devices waiting, the PIN goes to the one
-  that started pairing last.
+  gave up; start pairing again on the device. Both Hermit clients stop waiting a little earlier, at
+  295 seconds, and then send `/unpair`, so an un-cancelled pairing from them ends about 5 minutes
+  after it started with "Unfinished pairing dropped at the client's request" in the log. With
+  several devices waiting, the PIN goes to the one that started pairing last.
 - `GET /unpair?uniqueid=<id>` on the HTTP port: clients send it after a pairing failed on their side
-  (a wrong PIN), when the user cancels pairing (both Hermit clients) and from their own Unpair
-  command. Shell drops the unfinished pairing of that
+  (a wrong PIN), when the user cancels pairing or they stop waiting for the PIN at 295 seconds (both
+  Hermit clients) and from their own Unpair command. Shell drops the unfinished pairing of that
   uniqueid, answering a request it kept waiting for a PIN, and replies `<root status_code="200"/>`,
   so the client reports the wrong PIN. It never removes a paired device: without an unfinished
   pairing the reply is `status_code` 400 ("Unpair this device in the host's web UI"), so a client's
