@@ -16,6 +16,7 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 // lib includes
 #include <boost/asio/ssl/context.hpp>
@@ -1684,29 +1685,35 @@ namespace nvhttp {
     std::string content_type;  ///< no Content-Type header when empty
   };
 
-  /// Shell: one thread for the slow clipboard file work (walking folders, reading or unpacking up
-  /// to 256 MB), so the single HTTPS io thread keeps serving other requests meanwhile. Jobs run one
-  /// at a time, in order.
+  /// Shell: threads for the slow clipboard file work (walking folders, reading or unpacking up to
+  /// 256 MB, reading files that may stall), so the single HTTPS io thread keeps serving other
+  /// requests meanwhile. Queued jobs are taken in order by the first free thread; with one thread
+  /// they run one at a time.
   class clipboard_worker_t {
   public:
-    void start() {
+    void start(std::size_t count) {
       std::lock_guard lock {mutex};
       stopping = false;
-      thread = std::thread {[this]() {
-        run();
-      }};
+      for (std::size_t i = 0; i < count; ++i) {
+        threads.emplace_back([this]() {
+          run();
+        });
+      }
     }
 
-    /// Waits for the running job; queued jobs are dropped without a reply.
+    /// Waits for the running jobs; queued jobs are dropped without a reply.
     void stop() {
       {
         std::lock_guard lock {mutex};
         stopping = true;
       }
       wake.notify_all();
-      if (thread.joinable()) {
-        thread.join();
+      for (auto &thread : threads) {
+        if (thread.joinable()) {
+          thread.join();
+        }
       }
+      threads.clear();
       std::deque<std::function<void()>> dropped;
       std::lock_guard lock {mutex};
       dropped.swap(jobs);
@@ -1746,10 +1753,19 @@ namespace nvhttp {
     std::condition_variable wake;
     std::deque<std::function<void()>> jobs;
     bool stopping = false;
-    std::thread thread;
+    std::vector<std::thread> threads;
   };
 
+  /// Listing and packing (type=filelist, GET type=files) and unpacking (POST type=files), one at a time.
   clipboard_worker_t clipboard_worker;
+
+  /// Opening and reading the files of type=filedata, apart from clipboard_worker so a long job
+  /// there (a 256 MB archive) does not hold up downloads. Each read waits for the previous chunk of
+  /// its file to be sent, so a file is read strictly in order and holds at most one thread; a file
+  /// whose read stalls (a OneDrive placeholder being fetched, a slow network share) holds up only
+  /// that thread, and the others keep serving the remaining downloads of every device.
+  clipboard_worker_t clipboard_file_reader;
+  constexpr std::size_t clipboard_file_reader_threads = 4;
 
   /**
    * @brief Runs work on the clipboard worker, then writes its reply on the HTTPS io thread, the
@@ -1785,7 +1801,7 @@ namespace nvhttp {
     return !text.empty() && ec == std::errc {} && ptr == end;
   }
 
-  /// One file being sent for GET type=filedata: read in chunks on the clipboard worker, each chunk
+  /// One file being sent for GET type=filedata: read in chunks on the file reader threads, each chunk
   /// written on the io thread and the next one read only after it was written to the socket. The
   /// steps hand the stream from one thread to the other, so only one of them uses it at a time; the
   /// response is used, and released, on the io thread only.
@@ -1824,8 +1840,8 @@ namespace nvhttp {
       return;  // releasing the response finishes it (and closes the connection)
     }
     // ReadFile can stall (a network share, a cloud placeholder being fetched), so it runs on the
-    // clipboard worker. The response travels along untouched, which keeps the connection open.
-    clipboard_worker.post([stream, response = std::move(response)]() mutable {
+    // file reader threads. The response travels along untouched, which keeps the connection open.
+    clipboard_file_reader.post([stream, response = std::move(response)]() mutable {
       DWORD want = static_cast<DWORD>(std::min<std::uint64_t>(clipboard_file_chunk_bytes, stream->length - stream->sent));
       DWORD got = 0;
       bool read = ReadFile(stream->file, stream->buffer.data(), want, &got, nullptr) && got == want;
@@ -1898,9 +1914,9 @@ namespace nvhttp {
     stream->offset = offset;
     stream->length = entry.size - offset;
 
-    // Opening and checking the file can stall on a network share, so the clipboard worker does it
+    // Opening and checking the file can stall on a network share, so a file reader thread does it
     // and the io thread then answers. named_cert_p is not used off the io thread.
-    clipboard_worker.post([stream, response = std::move(response), entry]() mutable {
+    clipboard_file_reader.post([stream, response = std::move(response), entry]() mutable {
       bool changed = false;
       std::string why;
       try {
@@ -2560,7 +2576,8 @@ namespace nvhttp {
       }
     };
 #ifdef _WIN32
-    clipboard_worker.start();
+    clipboard_worker.start(1);
+    clipboard_file_reader.start(clipboard_file_reader_threads);
 #endif
     std::thread ssl {accept_and_run, &https_server};
     std::thread tcp {accept_and_run, &http_server};
@@ -2577,6 +2594,7 @@ namespace nvhttp {
     tcp.join();
 #ifdef _WIN32
     clipboard_worker.stop();
+    clipboard_file_reader.stop();
 #endif
   }
 
