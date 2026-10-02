@@ -81,6 +81,18 @@ namespace system_tray {
 
   void update_tray_paired(std::string device_name);
 
+  /**
+   * @brief Shell: update_tray_require_pin() without waiting for the tray thread, which shows the
+   * notice within about 50 ms. Repeated requests until then make one notice.
+   */
+  void queue_require_pin();
+
+  /**
+   * @brief Shell: update_tray_paired() without waiting for the tray thread.
+   * @param device_name The name of the paired device.
+   */
+  void queue_paired(std::string device_name);
+
   void update_tray_client_connected(std::string client_name);
 
   /**

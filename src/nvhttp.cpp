@@ -787,16 +787,6 @@ namespace nvhttp {
 
     pt::ptree tree;
 
-    // Shell: the tray is told from the task pool once this request is done (the guard is declared
-    // before the reply guard and the lock): tray_update waits for the tray thread, and a busy one
-    // must hold up neither map_id_sess_mutex nor the HTTP io thread that sends the reply.
-    std::function<void()> notify_tray;
-    auto tray_guard = util::fail_guard([&]() {
-      if (notify_tray) {
-        task_pool.push(std::move(notify_tray));
-      }
-    });
-
     auto fg = util::fail_guard([&]() {
       std::ostringstream data;
 
@@ -864,9 +854,9 @@ namespace nvhttp {
           return;
         } else {
 #if defined SHELL_TRAY && SHELL_TRAY >= 1
-          notify_tray = []() {
-            system_tray::update_tray_require_pin();
-          };
+          // Shell: queued for the tray thread, which shows it; tray_update waits for that thread,
+          // and neither this HTTP io thread nor the task pool (stream input) may wait on it
+          system_tray::queue_require_pin();
 #endif
           ptr->second.async_insert_pin.response = std::move(response);
 
@@ -902,9 +892,8 @@ namespace nvhttp {
       clientpairingsecret(sess_it->second, tree, pairingsecret, paired_name);
 #if defined SHELL_TRAY && SHELL_TRAY >= 1
       if (paired_name) {
-        notify_tray = [name = std::move(*paired_name)]() {
-          system_tray::update_tray_paired(name);
-        };
+        // Shell: queued for the tray thread (see getservercert above)
+        system_tray::queue_paired(std::move(*paired_name));
       }
 #endif
     } else {

@@ -36,6 +36,7 @@
   #endif
 
   // standard includes
+  #include <algorithm>
   #include <atomic>
   #include <chrono>
   #include <csignal>
@@ -44,6 +45,7 @@
   #include <format>
   #include <string>
   #include <thread>
+  #include <vector>
 
   // lib includes
   #include <boost/filesystem.hpp>
@@ -121,6 +123,19 @@ namespace system_tray {
 
   // A plain notification (defined below the menu)
   static void notify(const char *title, const char *text);
+
+  // Shell: notices asked by threads that must not wait for the tray thread (see queue_require_pin()),
+  // shown by process_tray_events(). Each kind is pending once at most, so a burst of pairing
+  // requests makes one notice; they are shown in the order they were first asked.
+  enum class pending_notice_e {
+    require_pin,
+    paired,
+  };
+
+  static std::mutex pending_notices_lock;
+  static std::vector<pending_notice_e> pending_notices;
+  static std::string pending_paired_name;
+  static void show_pending_notices();
 
   #ifdef _WIN32
   // Shell: hand the desktop back to the monitors without quitting the app
@@ -277,6 +292,9 @@ namespace system_tray {
       BOOST_LOG(warning) << "System tray loop failed"sv;
       return result;
     }
+
+    // Shell: the queued notices, on the thread that owns the tray
+    show_pending_notices();
 
     return 0;
   }
@@ -442,6 +460,50 @@ namespace system_tray {
     };
     tray.tooltip = TRAY_TOOLTIP;
     tray_update(&tray);
+  }
+
+  static void show_pending_notices() {
+    std::vector<pending_notice_e> notices;
+    std::string paired_name;
+    {
+      std::lock_guard lock {pending_notices_lock};
+      notices.swap(pending_notices);
+      paired_name = std::move(pending_paired_name);
+      pending_paired_name.clear();
+    }
+    for (const auto notice : notices) {
+      switch (notice) {
+        case pending_notice_e::require_pin:
+          update_tray_require_pin();
+          break;
+        case pending_notice_e::paired:
+          update_tray_paired(paired_name);
+          break;
+      }
+    }
+  }
+
+  static void queue_notice(pending_notice_e notice, std::string paired_name = {}) {
+    // As the update_tray_*() calls: nothing is kept for a tray that is not there (yet)
+    if (!tray_initialized) {
+      return;
+    }
+
+    std::lock_guard lock {pending_notices_lock};
+    if (notice == pending_notice_e::paired) {
+      pending_paired_name = std::move(paired_name);
+    }
+    if (std::find(pending_notices.begin(), pending_notices.end(), notice) == pending_notices.end()) {
+      pending_notices.push_back(notice);
+    }
+  }
+
+  void queue_require_pin() {
+    queue_notice(pending_notice_e::require_pin);
+  }
+
+  void queue_paired(std::string device_name) {
+    queue_notice(pending_notice_e::paired, std::move(device_name));
   }
 
   void
