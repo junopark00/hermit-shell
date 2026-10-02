@@ -164,7 +164,12 @@ The upstream `/actions/clipboard` endpoint carries text only. On Windows Shell a
 
 - `POST` replies with the new change number (`seq=`), so a client does not read back what it wrote.
 - `POST type=image` answers 413 when the PNG is over 32 MB or has more than 8192 × 8192 pixels
-  (width × height, read from its header).
+  (width × height, read from its header). `GET type=image` answers 413 when the clipboard holds an
+  image whose PNG is over 32 MB; an empty 200 reply means the clipboard holds no image.
+- `POST type=files` answers 413 when the archive is over its limits (256 MB of file data, 1,000
+  entries), 422 when a path in it cannot be created as it is (a path Windows does not allow, two
+  paths that differ only in case, a file also used as a folder) and 400 for a malformed archive;
+  the reason is in the body as plain text.
 - Received files are checked first (paths, duplicates, size), then extracted with the signed-in user's
   rights to `%LOCALAPPDATA%\Temp\ShellClipboard` and placed on the clipboard as CF_HDROP ("copy").
   Files that are sent are read with the user's rights; links and junctions are not followed.

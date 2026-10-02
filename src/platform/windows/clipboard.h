@@ -33,8 +33,12 @@ namespace platf::clipboard {
    */
   std::string current_type();
 
-  /// Clipboard image as PNG, from the "PNG" format or converted from CF_DIB. Empty if none.
-  std::string get_image_png();
+  /**
+   * @brief Clipboard image as PNG, from the "PNG" format or converted from CF_DIB.
+   * @param too_large Set to true when there is an image, but its PNG is over max_image_bytes.
+   * @return The PNG; empty if there is no image or it is too large.
+   */
+  std::string get_image_png(bool &too_large);
 
   /// Places a PNG on the clipboard as both "PNG" and CF_DIBV5. Returns false on invalid input or failure.
   bool set_image_png(const std::string &png);

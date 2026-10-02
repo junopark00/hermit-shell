@@ -432,7 +432,8 @@ namespace platf::clipboard {
     return dib;
   }
 
-  std::string get_image_png() {
+  std::string get_image_png(bool &too_large) {
+    too_large = false;
     if (!open_with_retry()) {
       return {};
     }
@@ -452,6 +453,7 @@ namespace platf::clipboard {
       png = dib_to_png(dib);
     }
     if (png.size() > max_image_bytes) {
+      too_large = true;
       return {};
     }
     return png;

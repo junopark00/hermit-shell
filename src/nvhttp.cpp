@@ -1567,14 +1567,18 @@ namespace nvhttp {
     return !ec;
   }
 
+  /// Over the size or item limits, when sending (archive_paths, list_paths) or receiving
+  /// (decode_archive) files: 413.
   bool is_file_limit_error(const std::string &error) {
-    return error == "files too large" || error == "too many files" || error == "archive too large";
+    return error == "files too large" || error == "too many files" || error == "archive too large" || error == "entry count out of range";
   }
 
-  /// The copied files themselves cannot be sent (a name the client cannot create, two names that
-  /// differ only in case, or nothing left once links are skipped): 422, not a host failure.
+  /// The copied files themselves cannot be sent or kept (a name the other side cannot create, two
+  /// names that differ only in case, a file also used as a folder, or nothing left once links are
+  /// skipped): 422, not a host failure.
   bool is_file_content_error(const std::string &error) {
-    return error.starts_with("unsupported file name") || error.starts_with("duplicate name") || error == "nothing to copy";
+    return error.starts_with("unsupported file name") || error.starts_with("duplicate name") || error == "nothing to copy" ||
+           error == "unsafe path" || error == "duplicate path" || error == "file used as directory";
   }
 
   /// Status for a failed type=files or type=filelist: 413 limits, 422 content, 500 everything else
@@ -1587,6 +1591,13 @@ namespace nvhttp {
       return SimpleWeb::StatusCode::client_error_unprocessable_entity;
     }
     return SimpleWeb::StatusCode::server_error_internal_server_error;
+  }
+
+  /// Status for an archive decode_archive rejected (POST type=files): 413 limits, 422 content,
+  /// 400 everything else, which is a malformed archive rather than a host failure.
+  SimpleWeb::StatusCode archive_error_status(const std::string &error) {
+    auto status = file_error_status(error);
+    return status == SimpleWeb::StatusCode::server_error_internal_server_error ? SimpleWeb::StatusCode::client_error_bad_request : status;
   }
 
   /// Shell: a file list served with GET /actions/clipboard?type=filelist, whose files are then
@@ -2092,10 +2103,17 @@ namespace nvhttp {
       return;
     }
     if (clipboard_type == "image"sv) {
-      // Empty body means there is no image (or it exceeds the size limit).
+      // Empty body means there is no image; 413 that there is one, but over the size limit.
+      bool too_large = false;
+      auto png = platf::clipboard::get_image_png(too_large);
+      if (too_large) {
+        response->write(SimpleWeb::StatusCode::client_error_payload_too_large);
+        response->close_connection_after_response = true;
+        return;
+      }
       SimpleWeb::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "image/png");
-      response->write(SimpleWeb::StatusCode::success_ok, platf::clipboard::get_image_png(), headers);
+      response->write(SimpleWeb::StatusCode::success_ok, png, headers);
       return;
     }
     if (clipboard_type == "files"sv || clipboard_type == "filelist"sv || clipboard_type == "filedata"sv) {
@@ -2257,7 +2275,7 @@ namespace nvhttp {
         std::string error;
         if (!platf::clipboard::decode_archive(content, entries, error)) {
           BOOST_LOG(info) << "Clipboard files from [" << client << "] rejected: " << error;
-          return file_reply_t {SimpleWeb::StatusCode::client_error_bad_request, error, {}};
+          return file_reply_t {archive_error_status(error), error, {}};
         }
         content.clear();
         content.shrink_to_fit();
