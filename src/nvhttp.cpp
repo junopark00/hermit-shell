@@ -1571,10 +1571,19 @@ namespace nvhttp {
   struct clipboard_snapshot_t {
     std::string id;
     std::vector<platf::clipboard::file_list_entry> entries;
+    std::uint64_t stream_session = 0;  ///< the client's stream session it was made in (alloc order)
+    DWORD console_session = 0;  ///< the Windows console session whose user listed the files
   };
 
+  /// The client's current stream session (its alloc order), or 0 if it has none.
+  std::uint64_t current_stream_session(const std::string &client_uuid) {
+    auto session = rtsp_stream::find_session(client_uuid);
+    return session ? stream::session::alloc_order(*session) : 0;
+  }
+
   /// Newest two per client (cert uuid): a paste that is still copying from the previous list keeps
-  /// working after the client fetched a newer one. Older lists are dropped (410 Gone).
+  /// working after the client fetched a newer one. Older lists are dropped (410 Gone), and so are
+  /// lists from an earlier stream session of the client: a list lives only as long as its session.
   constexpr std::size_t clipboard_snapshots_per_client = 2;
   std::mutex clipboard_snapshots_mutex;
   std::map<std::string, std::deque<std::shared_ptr<const clipboard_snapshot_t>>> clipboard_snapshots;
@@ -1582,18 +1591,24 @@ namespace nvhttp {
   void store_clipboard_snapshot(const std::string &client_uuid, std::shared_ptr<const clipboard_snapshot_t> snapshot) {
     std::lock_guard lock {clipboard_snapshots_mutex};
     auto &list = clipboard_snapshots[client_uuid];
+    std::erase_if(list, [&](const auto &stored) {
+      return stored->stream_session != snapshot->stream_session;
+    });
     list.push_front(std::move(snapshot));
     while (list.size() > clipboard_snapshots_per_client) {
       list.pop_back();
     }
   }
 
-  std::shared_ptr<const clipboard_snapshot_t> find_clipboard_snapshot(const std::string &client_uuid, const std::string &id) {
+  std::shared_ptr<const clipboard_snapshot_t> find_clipboard_snapshot(const std::string &client_uuid, const std::string &id, std::uint64_t stream_session) {
     std::lock_guard lock {clipboard_snapshots_mutex};
     auto it = clipboard_snapshots.find(client_uuid);
     if (id.empty() || it == clipboard_snapshots.end()) {
       return nullptr;
     }
+    std::erase_if(it->second, [&](const auto &stored) {
+      return stored->stream_session != stream_session;
+    });
     for (const auto &snapshot : it->second) {
       if (snapshot->id == id) {
         return snapshot;
@@ -1671,7 +1686,8 @@ namespace nvhttp {
    * @brief Shell: GET type=filedata&snapshot=<id>&index=<n>[&offset=<bytes>]: the bytes of one file from
    * the client's file list, from offset to the end (offset lets the client resume).
    * 400 bad arguments, 404 index is not a file, 409 the file is gone or changed since the list was
-   * made, 410 unknown or dropped list, 416 offset past the end, 500 the file cannot be opened.
+   * made, 410 unknown or dropped list (also when it was made in an earlier stream session or for
+   * another signed-in user), 416 offset past the end, 500 the file cannot be opened.
    */
   void send_clipboard_file(resp_https_t response, const crypto::named_cert_t *named_cert_p, const args_t &args) {
     auto fail = [&](SimpleWeb::StatusCode code, const std::string &why) {
@@ -1685,9 +1701,14 @@ namespace nvhttp {
       fail(SimpleWeb::StatusCode::client_error_bad_request, "bad index or offset");
       return;
     }
-    auto snapshot = find_clipboard_snapshot(named_cert_p->uuid, get_arg(args, "snapshot", ""));
+    auto snapshot = find_clipboard_snapshot(named_cert_p->uuid, get_arg(args, "snapshot", ""), current_stream_session(named_cert_p->uuid));
     if (!snapshot) {
       fail(SimpleWeb::StatusCode::client_error_gone, "unknown file list");
+      return;
+    }
+    // The files were listed with the rights of the user signed in then; nobody else gets them.
+    if (snapshot->console_session != WTSGetActiveConsoleSessionId()) {
+      fail(SimpleWeb::StatusCode::client_error_gone, "the signed-in user changed since the list was made");
       return;
     }
     if (index >= snapshot->entries.size() || snapshot->entries[index].directory) {
@@ -1973,6 +1994,8 @@ namespace nvhttp {
         return;
       }
       auto snapshot = std::make_shared<clipboard_snapshot_t>();
+      snapshot->stream_session = current_stream_session(named_cert_p->uuid);
+      snapshot->console_session = WTSGetActiveConsoleSessionId();
       std::string error;
       bool listed = false;
       if (!run_as_console_user([&](HANDLE) {

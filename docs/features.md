@@ -170,13 +170,16 @@ The upstream `/actions/clipboard` endpoint carries text only. On Windows Shell a
   the clipboard holds no files; 413 means the list is over 4 GB or 1,000 items (422 and 500 as
   above).
 - Shell keeps the newest two lists per paired device in memory (by device UUID), so a paste that is
-  still copying from the previous list keeps working after the client fetches a new one.
+  still copying from the previous list keeps working after the client fetches a new one. A list
+  belongs to the stream session it was made in and to the user signed in at the console then: once
+  that stream ends (or the device reconnects), or another user signs in, the list is gone (410) and
+  the client has to fetch a new one.
 - `type=filedata` takes the item's position in the list (`index`, from 0) and answers with
   `Content-Length` and the file read from disk in 256 KB chunks, each sent after the previous one
   left, so a slow client holds the host back through TCP flow control and the file is never held in
   memory. The file is opened with the user's rights and must still have the listed size and last
   write time. Errors: 400 bad arguments, 404 the index is not a file of the list, 409 the file is gone
-  or changed, 410 unknown or dropped list, 416 offset past the end, 500 the file cannot be opened. If
+  or changed, 410 unknown, dropped or expired list, 416 offset past the end, 500 the file cannot be opened. If
   the file cannot be read to the end, the connection closes early.
 - The HTTPS server ends a request whose upload or response takes longer than 30 minutes (1,800
   seconds), which leaves a 256 MB `type=files` transfer room down to about 1.2 Mbps. Longer
