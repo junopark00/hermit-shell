@@ -9,6 +9,12 @@
     .content-container {
       padding-top: 2em;
     }
+
+    /* Shell: wide enough for the permission toggles, the inputs follow the card */
+    .pair-card {
+      width: 44rem;
+      max-width: 100%;
+    }
   </style>
 </head>
 
@@ -17,10 +23,36 @@
   <div id="content" class="container content-container d-flex flex-column align-items-center">
     <!-- PIN pairing only: Moonlight and Hermit clients pair with a PIN (no OTP pairing). -->
     <form class="form d-flex flex-column align-items-center" id="form" @submit.prevent="registerDevice">
-      <div class="card flex-column d-flex p-4 mb-4">
+      <div class="card flex-column d-flex p-4 mb-4 pair-card">
         <input type="text" inputmode="numeric" pattern="\d{4}" maxlength="4" :placeholder="$t('pin.pin_placeholder')" autofocus id="pin-input" class="form-control mt-2" v-model="pin" required />
-        <input type="text" :placeholder="$t('pin.device_name')" id="name-input" class="form-control my-4" v-model="deviceName" />
-        <button class="btn btn-primary">{{ $t('pin.send') }}</button>
+        <input type="text" :placeholder="$t('pin.device_name')" id="name-input" class="form-control mt-4" v-model="deviceName" />
+        <!-- Shell: the permissions the device gets when the PIN is accepted; the device editor below
+             changes them later. -->
+        <label for="pair-perm-preset" class="form-label mt-4 mb-1">{{ $t('pin.pair_perm') }}</label>
+        <div class="d-flex align-items-center">
+          <select id="pair-perm-preset" class="form-select" v-model="pairPreset" @change="applyPairPreset">
+            <option v-for="preset in pairPresets" :value="preset.name">{{ $t('pin.pair_perm_' + preset.name) }}</option>
+            <option value="custom">{{ $t('pin.pair_perm_custom') }}</option>
+          </select>
+          <span class="badge text-nowrap ms-2" :class="pairing.editPerm >= 0x04000000 ? 'bg-danger' : 'bg-primary'">
+            {{ permissionSummary(pairing.editPerm) }}
+          </span>
+        </div>
+        <div class="form-text">
+          {{ $t('pin.pair_perm_' + pairPreset + '_desc') }} {{ $t('pin.pair_perm_later') }}
+          <a v-if="pairPreset !== 'custom'" href="#" class="text-nowrap" @click.prevent="showPairToggles = !showPairToggles">
+            {{ $t(showPairToggles ? 'pin.pair_perm_hide' : 'pin.pair_perm_show') }}
+          </a>
+        </div>
+        <div v-if="pairPreset === 'custom' || showPairToggles" class="align-items-top d-flex flex-row flex-wrap justify-content-center mt-2">
+          <div v-for="group in permissionGroups" class="d-flex flex-column mx-2">
+            <div class="mx-2">{{ $t('shell_ui.perm_group_' + group.name.toLowerCase()) }}:</div>
+            <button v-for="perm in group.permissions" type="button" class="my-1 btn btn-sm" :disabled="isSuppressed(pairing.editPerm, perm.name, perm.suppressed_by)" :class="(isSuppressed(pairing.editPerm, perm.name, perm.suppressed_by) || checkPermission(pairing.editPerm, perm.name)) ? 'btn-success' : 'btn-outline-secondary'" @click="togglePairPermission(perm.name)">
+              {{ $t(`permissions.${perm.name}`) }}
+            </button>
+          </div>
+        </div>
+        <button class="btn btn-primary mt-4" ref="pairButton">{{ $t('pin.send') }}</button>
       </div>
       <div v-if="pairStatus" class="alert" :class="pairStatus === 'success' ? 'alert-success' : 'alert-danger'" role="alert">{{ pairMessage }}</div>
     </form>
@@ -301,12 +333,62 @@
   // view by launch) counts as granted, the same way the dashboard counts it.
   const allPermissions = permissionGroups.flatMap(group => group.permissions);
 
+  // Shell: what a newly paired device gets, chosen beside the PIN. "custom" is the toggles below the
+  // select. The last choice is kept in localStorage; the first pairing starts from full access.
+  const pairPresets = [
+    { name: 'all', perm: permissionMapping._all },
+    { name: 'stream', perm: permissionMapping._all_actions | permissionMapping._all_inputs },
+    { name: 'view', perm: permissionMapping._default },
+  ];
+  const PAIR_PERM_KEY = 'shell.pairPerm';
+
+  const loadPairChoice = () => {
+    const choice = { preset: 'all', custom: permissionMapping._all };
+    try {
+      const saved = JSON.parse(localStorage.getItem(PAIR_PERM_KEY));
+      if (saved && (saved.preset === 'custom' || pairPresets.some(p => p.name === saved.preset))) {
+        choice.preset = saved.preset;
+      }
+      if (saved && Number.isInteger(saved.custom)) {
+        choice.custom = saved.custom & permissionMapping._all;
+      }
+    } catch (e) {
+      // no storage or an old value: start from full access
+    }
+    return choice;
+  };
+
+  const savePairChoice = (preset, custom) => {
+    try {
+      localStorage.setItem(PAIR_PERM_KEY, JSON.stringify({ preset, custom }));
+    } catch (e) {
+      // storage blocked: the choice lasts for this page only
+    }
+  };
+
+  // Shell: Hermit opens this page as /pin#pin=1234&name=<device>; the fragment stays in the browser.
+  const readPairHash = () => {
+    const hash = window.location.hash;
+    if (!hash || hash.length < 2) {
+      return null;
+    }
+    const params = new URLSearchParams(hash.substring(1));
+    const pin = params.get('pin') || '';
+    const name = params.get('name') || '';
+    if (!/^\d{4}$/.test(pin) && !name) {
+      return null;
+    }
+    return { pin: /^\d{4}$/.test(pin) ? pin : '', name };
+  };
+
   const NOTICE_MS = 5000;
 
   let currentEditingClient = null;
   let noticeTimeout = null;
 
   const data = () => {
+    const choice = loadPairChoice();
+    const preset = pairPresets.find(p => p.name === choice.preset);
     return {
       platform: '',
       pin: '',
@@ -314,6 +396,12 @@
       pairStatus: '',
       pairMessage: '',
       permissionGroups,
+      pairPresets,
+      pairPreset: choice.preset,
+      // Shaped like a client in the editor so the permission helpers apply to it as well
+      pairing: { editPerm: preset ? preset.perm : choice.custom },
+      pairCustomPerm: choice.custom,
+      showPairToggles: false,
       clients: [],
       clientsError: false,
       notice: null,
@@ -336,7 +424,42 @@
     created() {
       this.refreshClients();
     },
+    mounted() {
+      // Shell: prefill from the fragment a companion client opened this page with, then drop it so a
+      // reload starts clean. The user still presses Pair.
+      const prefill = readPairHash();
+      if (!prefill) {
+        return;
+      }
+      if (prefill.pin) {
+        this.pin = prefill.pin;
+      }
+      if (prefill.name) {
+        this.deviceName = prefill.name;
+      }
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+      this.$nextTick(() => {
+        if (this.$refs.pairButton) {
+          this.$refs.pairButton.focus();
+        }
+      });
+    },
     methods: {
+      applyPairPreset() {
+        const preset = pairPresets.find(p => p.name === this.pairPreset);
+        this.pairing.editPerm = preset ? preset.perm : this.pairCustomPerm;
+        savePairChoice(this.pairPreset, this.pairCustomPerm);
+      },
+      togglePairPermission(permission) {
+        this.togglePermission(this.pairing, permission);
+        // The toggles now define the bits: a preset whose bits they equal is selected, else custom
+        const preset = pairPresets.find(p => p.perm === this.pairing.editPerm);
+        this.pairPreset = preset ? preset.name : 'custom';
+        if (!preset) {
+          this.pairCustomPerm = this.pairing.editPerm;
+        }
+        savePairChoice(this.pairPreset, this.pairCustomPerm);
+      },
       showNotice(type, text) {
         this.notice = { type, text };
         clearTimeout(noticeTimeout);
@@ -346,19 +469,20 @@
       },
       registerDevice() {
         this.pairStatus = '';
+        const perm = this.pairing.editPerm & permissionMapping._all;
         fetch("./api/pin", {
           credentials: 'include',
           headers: {
             'Content-Type': 'application/json'
           },
           method: 'POST',
-          body: JSON.stringify({pin: this.pin, name: this.deviceName})
+          body: JSON.stringify({pin: this.pin, name: this.deviceName, perm})
         })
           .then((response) => response.json())
           .then((response) => {
             if (response.status === true) {
               this.pairStatus = 'success';
-              this.pairMessage = this.i18n.t('pin.pair_success');
+              this.pairMessage = this.i18n.t('pin.pair_success', { perm: this.permissionSummary(perm) });
               this.pin = '';
               this.deviceName = '';
 
