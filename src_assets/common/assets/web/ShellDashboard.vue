@@ -297,7 +297,9 @@ const PERMISSIONS = [
   { bit: 0x01000000, impliedBy: 0x06000000 },  // list
   { bit: 0x02000000, impliedBy: 0x04000000 },  // view
   { bit: 0x04000000 },                          // launch
-  { bit: 0x00010000 }, { bit: 0x00020000 }, { bit: 0x00100000 },  // clipboard set/read, server commands
+  { bit: 0x00010000 }, { bit: 0x00020000 },  // clipboard set/read
+  { bit: 0x00040000 }, { bit: 0x00080000 },  // file upload/download
+  { bit: 0x00100000 },                        // server commands
   { bit: 0x00000100 }, { bit: 0x00000200 }, { bit: 0x00000400 }, { bit: 0x00000800 }, { bit: 0x00001000 },  // inputs
 ];
 
