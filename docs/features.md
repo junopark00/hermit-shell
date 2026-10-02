@@ -144,6 +144,12 @@ The upstream `/actions/clipboard` endpoint carries text only. On Windows Shell a
   rights to `%LOCALAPPDATA%\Temp\ShellClipboard` and placed on the clipboard as CF_HDROP ("copy").
   Files that are sent are read with the user's rights; links and junctions are not followed.
 - When another program holds the clipboard, Shell retries briefly.
+- `GET type=files` and `GET type=filelist` fail with 413 when the copy is over the size or item
+  limit, 422 when the files cannot be copied as they are, and 500 when no user is signed in or a
+  file cannot be read; the reason is in the body as plain text. 422 covers a name Windows paths do
+  not allow (reserved names such as `CON`, a trailing dot or space, a name over 255 UTF-16 code
+  units), two names that differ only in case (compared with the Unicode uppercase mapping, not only
+  ASCII), and nothing left to copy once links are skipped.
 - `files=stream` in the `type=info` reply means the host has `type=filelist` and `type=filedata`.
   Clients read the reply lines by key, so older clients ignore it. Hermit then puts host files on the
   local clipboard as virtual files and downloads each file only while it is pasted; older clients and
@@ -161,7 +167,8 @@ The upstream `/actions/clipboard` endpoint carries text only. On Windows Shell a
   ```
 
   One line per item, folders before their contents, relative paths with `/`. An empty reply means
-  the clipboard holds no files; 413 means the list is over 4 GB or 1,000 items.
+  the clipboard holds no files; 413 means the list is over 4 GB or 1,000 items (422 and 500 as
+  above).
 - Shell keeps the newest two lists per paired device in memory (by device UUID), so a paste that is
   still copying from the previous list keeps working after the client fetches a new one.
 - `type=filedata` takes the item's position in the list (`index`, from 0) and answers with

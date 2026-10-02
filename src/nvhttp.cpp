@@ -1548,6 +1548,24 @@ namespace nvhttp {
     return error == "files too large" || error == "too many files" || error == "archive too large";
   }
 
+  /// The copied files themselves cannot be sent (a name the client cannot create, two names that
+  /// differ only in case, or nothing left once links are skipped): 422, not a host failure.
+  bool is_file_content_error(const std::string &error) {
+    return error.starts_with("unsupported file name") || error.starts_with("duplicate name") || error == "nothing to copy";
+  }
+
+  /// Status for a failed type=files or type=filelist: 413 limits, 422 content, 500 everything else
+  /// (no user session, I/O errors).
+  SimpleWeb::StatusCode file_error_status(const std::string &error) {
+    if (is_file_limit_error(error)) {
+      return SimpleWeb::StatusCode::client_error_payload_too_large;
+    }
+    if (is_file_content_error(error)) {
+      return SimpleWeb::StatusCode::client_error_unprocessable_entity;
+    }
+    return SimpleWeb::StatusCode::server_error_internal_server_error;
+  }
+
   /// Shell: a file list served with GET /actions/clipboard?type=filelist, whose files are then
   /// fetched one by one with type=filedata.
   struct clipboard_snapshot_t {
@@ -1964,7 +1982,7 @@ namespace nvhttp {
       }
       if (!listed) {
         BOOST_LOG(info) << "Clipboard file list not sent to [" << named_cert_p->name << "]: " << error;
-        response->write(is_file_limit_error(error) ? SimpleWeb::StatusCode::client_error_payload_too_large : SimpleWeb::StatusCode::server_error_internal_server_error, error);
+        response->write(file_error_status(error), error);
         response->close_connection_after_response = true;
         return;
       }
@@ -1997,7 +2015,7 @@ namespace nvhttp {
       }
       if (!packed) {
         BOOST_LOG(info) << "Clipboard files not sent to [" << named_cert_p->name << "]: " << error;
-        response->write(is_file_limit_error(error) ? SimpleWeb::StatusCode::client_error_payload_too_large : SimpleWeb::StatusCode::server_error_internal_server_error, error);
+        response->write(file_error_status(error), error);
         response->close_connection_after_response = true;
         return;
       }
