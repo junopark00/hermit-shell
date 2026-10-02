@@ -2909,6 +2909,7 @@ namespace nvhttp {
     bool clipboard_ended = clipboard_worker.stop(clipboard_deadline);
     clipboard_ended = clipboard_file_reader.stop(clipboard_deadline) && clipboard_ended;
     if (!clipboard_ended) {
+      clipboard_threads_left_behind = true;
       // Shell: a job left behind posts its reply, with the response, to the stopped HTTPS io
       // context. Kept alive, the context never runs nor destroys that reply, so no response is
       // finished (its deleter uses https_server) or destroyed after this returns.
@@ -2916,6 +2917,8 @@ namespace nvhttp {
     }
 #endif
   }
+
+  std::atomic_bool clipboard_threads_left_behind {false};
 
   void
   erase_all_clients() {

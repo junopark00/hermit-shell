@@ -5,6 +5,7 @@
 // standard includes
 #include <codecvt>
 #include <csignal>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 
@@ -162,6 +163,17 @@ int main(int argc, char *argv[]) {
   if (config::parse(argc, argv)) {
     return 0;
   }
+
+#ifdef _WIN32
+  // Shell: runs after main() returned (its locals, such as the display and log guards, are done)
+  // and before the static objects built before this point are destroyed. A clipboard file job that
+  // nvhttp had to leave behind could still use them, so end the process here in that case.
+  std::atexit([]() {
+    if (nvhttp::clipboard_threads_left_behind) {
+      std::_Exit(lifetime::desired_exit_code);
+    }
+  });
+#endif
 
   auto log_deinit_guard = logging::init(config::shell.min_log_level, config::shell.log_file);
   if (!log_deinit_guard) {

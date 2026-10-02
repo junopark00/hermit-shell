@@ -6,6 +6,7 @@
 #pragma once
 
 // standard includes
+#include <atomic>
 #include <string>
 #include <chrono>
 #include <list>
@@ -60,6 +61,13 @@ namespace nvhttp {
    * @examples_end
    */
   void start();
+
+  /**
+   * @brief Shell: set when start() left clipboard file jobs behind, detached and stuck in a call
+   * that could not be cancelled. main() then ends the process before static destruction, which
+   * such a job could still be using (loggers, OpenSSL).
+   */
+  extern std::atomic_bool clipboard_threads_left_behind;
 
   std::string
   get_arg(const args_t &args, const char *name, const char *default_value = nullptr);
