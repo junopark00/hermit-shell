@@ -72,11 +72,11 @@ Must run in an elevated PowerShell. -NoService and -InstallDir exist for testing
 (no service, firewall, driver or certificate changes); -SasPolicyKey (another registry key for the
 Ctrl+Alt+Del policy) lets a test check that step with -NoService.
 .EXAMPLE
-powershell -ExecutionPolicy Bypass -File .\Install-Shell.ps1 -ZipPath .\Shell-1.0.0.zip
+powershell -ExecutionPolicy Bypass -File .\Install-Shell.ps1 -ZipPath .\Shell-1.1.0.zip
 .EXAMPLE
 .\Install-Shell.ps1 -Rollback -BackupPath C:\ProgramData\Shell\backups\20260930-010203-1.0.0
 .EXAMPLE
-.\Install-Shell.ps1 -ZipPath .\Shell-1.0.0.zip -MigrateFromApollo
+.\Install-Shell.ps1 -ZipPath .\Shell-1.1.0.zip -MigrateFromApollo
 .EXAMPLE
 .\Install-Shell.ps1 -Uninstall -RemoveDriver
 #>

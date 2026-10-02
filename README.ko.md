@@ -65,12 +65,12 @@ Shell은 **Windows 전용**입니다. 업스트림에서 이어받은 Linux와 m
 
 ## 설치
 
-1. [최신 릴리스](https://github.com/junopark00/hermit-shell/releases/latest)에서 `Shell-1.0.0.zip`과
+1. [최신 릴리스](https://github.com/junopark00/hermit-shell/releases/latest)에서 `Shell-1.1.0.zip`과
    `Install-Shell.ps1`을 같은 폴더에 내려받습니다. ZIP 파일은 풀지 않습니다.
 2. 그 폴더에서 **관리자 권한 PowerShell**을 열고 실행합니다.
 
    ```powershell
-   powershell -ExecutionPolicy Bypass -File .\Install-Shell.ps1 -ZipPath .\Shell-1.0.0.zip
+   powershell -ExecutionPolicy Bypass -File .\Install-Shell.ps1 -ZipPath .\Shell-1.1.0.zip
    ```
 
 설치 도구는 Shell을 `C:\Program Files\Shell`에 복사하고, SudoVDA 가상 디스플레이 드라이버와 ViGEmBus 가상

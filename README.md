@@ -70,13 +70,13 @@ neither maintained nor tested.
 
 ## Installation
 
-1. Download `Shell-1.0.0.zip` and `Install-Shell.ps1` from the
+1. Download `Shell-1.1.0.zip` and `Install-Shell.ps1` from the
    [latest release](https://github.com/junopark00/hermit-shell/releases/latest) into the same folder.
    Leave the ZIP file as it is.
 2. Open **PowerShell as administrator** in that folder and run:
 
    ```powershell
-   powershell -ExecutionPolicy Bypass -File .\Install-Shell.ps1 -ZipPath .\Shell-1.0.0.zip
+   powershell -ExecutionPolicy Bypass -File .\Install-Shell.ps1 -ZipPath .\Shell-1.1.0.zip
    ```
 
 The installer copies Shell to `C:\Program Files\Shell`, installs the SudoVDA virtual display driver and

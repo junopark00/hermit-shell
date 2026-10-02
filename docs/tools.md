@@ -26,7 +26,7 @@ The examples below assume the script and the ZIP are in the current folder.
 ### Install and update
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\Install-Shell.ps1 -ZipPath .\Shell-1.0.0.zip
+powershell -ExecutionPolicy Bypass -File .\Install-Shell.ps1 -ZipPath .\Shell-1.1.0.zip
 ```
 
 The ZIP must contain a single top folder `Shell` with `shell.exe`; anything else is rejected before
@@ -92,7 +92,7 @@ certificate stores. The ViGEmBus driver stays; remove it from
 ### Migrating from Apollo
 
 ```powershell
-.\Install-Shell.ps1 -ZipPath .\Shell-1.0.0.zip -MigrateFromApollo
+.\Install-Shell.ps1 -ZipPath .\Shell-1.1.0.zip -MigrateFromApollo
 ```
 
 For a PC with Apollo installed (`ApolloService`, `C:\Program Files\Apollo`). A first installation
