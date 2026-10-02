@@ -475,7 +475,9 @@ namespace nvhttp {
   }
 
   void remove_session(const pair_session_t &sess) {
-    map_id_sess.erase(sess.client.uniqueID);
+    // Shell: a copy, since the key would otherwise live in the session being erased
+    const auto unique_id = sess.client.uniqueID;
+    map_id_sess.erase(unique_id);
   }
 
   void fail_pair(pair_session_t &sess, pt::ptree &tree, const std::string status_msg) {
@@ -643,9 +645,8 @@ namespace nvhttp {
       named_cert_p->allow_client_commands = true;
       named_cert_p->always_use_virtual_display = false;
 
-      auto it = map_id_sess.find(client.uniqueID);
-      map_id_sess.erase(it);
-
+      // Shell: the session is erased once, by remove_session below; erasing it here as well left
+      // remove_session reading the uniqueid from the freed session.
       add_authorized_client(named_cert_p);
     } else {
       tree.put("root.paired", 0);
@@ -754,6 +755,11 @@ namespace nvhttp {
         sess.client.cert = util::from_hex_vec(get_arg(args, "clientcert"), true);
 
         BOOST_LOG(debug) << sess.client.cert;
+        // Shell: a new pairing attempt replaces any earlier session of this uniqueid (a wrong PIN
+        // leaves one at SERVERCHALLENGERESP, a dropped handshake at GETSERVERCERT). Kept, it would
+        // never be offered a PIN again, and stock clients all share one uniqueid. Its pending
+        // request, if any, is dropped unanswered.
+        map_id_sess.erase(sess.client.uniqueID);
         auto ptr = map_id_sess.emplace(sess.client.uniqueID, std::move(sess)).first;
 
         ptr->second.async_insert_pin.salt = std::move(get_arg(args, "salt"));
