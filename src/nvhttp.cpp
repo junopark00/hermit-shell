@@ -377,13 +377,12 @@ namespace nvhttp {
     client_root = client;
   }
 
+  /// Shell: called under map_id_sess_mutex (clientpairingsecret), which keeps two pairings that end
+  /// at once on the HTTP and HTTPS threads from changing client_root together; it waits for no other
+  /// thread, only writes the small state file. The tray is told by pair once the lock is released.
   void add_authorized_client(const p_named_cert_t& named_cert_p) {
     client_t &client = client_root;
     client.named_devices.push_back(named_cert_p);
-
-#if defined SHELL_TRAY && SHELL_TRAY >= 1
-    system_tray::update_tray_paired(named_cert_p->name);
-#endif
 
     if (!config::shell.flags[config::flag::FRESH_STATE]) {
       save_state();
@@ -656,7 +655,8 @@ namespace nvhttp {
     tree.put("root.<xmlattr>.status_code", 200);
   }
 
-  void clientpairingsecret(pair_session_t &sess, pt::ptree &tree, const std::string &client_pairing_secret) {
+  /// Shell: paired_name gets the name of the device once it is paired, for the tray notification.
+  void clientpairingsecret(pair_session_t &sess, pt::ptree &tree, const std::string &client_pairing_secret, std::optional<std::string> &paired_name) {
     if (sess.last_phase != PAIR_PHASE::SERVERCHALLENGERESP) {
       fail_pair(sess, tree, "Out of order call to clientpairingsecret");
       return;
@@ -720,6 +720,7 @@ namespace nvhttp {
       // Shell: the session is erased once, by remove_session below; erasing it here as well left
       // remove_session reading the uniqueid from the freed session.
       add_authorized_client(named_cert_p);
+      paired_name = named_cert_p->name;
     } else {
       tree.put("root.paired", 0);
       BOOST_LOG(warning) << "Pair attempt failed due to same_hash: " << same_hash << ", verify: " << verify;
@@ -785,6 +786,16 @@ namespace nvhttp {
     print_req<T>(request);
 
     pt::ptree tree;
+
+    // Shell: the tray is told last, after the reply and with map_id_sess_mutex released (both are
+    // declared after this): tray_update waits for the tray thread, and a busy one held up every
+    // pairing and the PIN page.
+    std::function<void()> notify_tray;
+    auto tray_guard = util::fail_guard([&]() {
+      if (notify_tray) {
+        notify_tray();
+      }
+    });
 
     auto fg = util::fail_guard([&]() {
       std::ostringstream data;
@@ -853,7 +864,9 @@ namespace nvhttp {
           return;
         } else {
 #if defined SHELL_TRAY && SHELL_TRAY >= 1
-          system_tray::update_tray_require_pin();
+          notify_tray = []() {
+            system_tray::update_tray_require_pin();
+          };
 #endif
           ptr->second.async_insert_pin.response = std::move(response);
 
@@ -885,7 +898,15 @@ namespace nvhttp {
       serverchallengeresp(sess_it->second, tree, encrypted_response);
     } else if (it = args.find("clientpairingsecret"); it != std::end(args)) {
       auto pairingsecret = util::from_hex_vec(it->second, true);
-      clientpairingsecret(sess_it->second, tree, pairingsecret);
+      std::optional<std::string> paired_name;
+      clientpairingsecret(sess_it->second, tree, pairingsecret, paired_name);
+#if defined SHELL_TRAY && SHELL_TRAY >= 1
+      if (paired_name) {
+        notify_tray = [name = std::move(*paired_name)]() {
+          system_tray::update_tray_paired(name);
+        };
+      }
+#endif
     } else {
       tree.put("root.<xmlattr>.status_code", 404);
       tree.put("root.<xmlattr>.status_message", "Invalid pairing request");
