@@ -54,4 +54,10 @@ namespace platf {
    * @return An error if impersonation could not start; the callback is not run in that case.
    */
   std::error_code impersonate_current_user(HANDLE user_token, std::function<void()> callback);
+
+  /**
+   * @brief Shell: start the new instance a standalone restart() asked for, if it has not started yet.
+   * restart() registers this with atexit; main() calls it itself when it ends the process early.
+   */
+  void restart_if_requested();
 }  // namespace platf

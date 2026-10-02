@@ -1216,12 +1216,24 @@ namespace platf {
     CloseHandle(process_info.hThread);
   }
 
+  namespace {
+    // Shell: set with the atexit registration below, for main()'s early exit (restart_if_requested)
+    std::atomic_bool restart_requested {false};
+  }  // namespace
+
+  void restart_if_requested() {
+    if (restart_requested.exchange(false)) {
+      restart_on_exit();
+    }
+  }
+
   void restart() {
     // If we're running standalone, we have to respawn ourselves via CreateProcess().
     // If we're running from the service, we should just exit and let it respawn us.
     if (GetConsoleWindow() != nullptr) {
       // Avoid racing with the new process by waiting until we're exiting to start it.
-      atexit(restart_on_exit);
+      restart_requested = true;
+      atexit(restart_if_requested);
     }
 
     // We use an async exit call here because we can't block the HTTP thread or we'll hang shutdown.

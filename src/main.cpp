@@ -148,6 +148,7 @@ int main(int argc, char *argv[]) {
   // behind, stuck in a call that could not be cancelled, could still use them (loggers, OpenSSL),
   // so end the process now in that case.
   if (nvhttp::clipboard_threads_left_behind) {
+    platf::restart_if_requested();  // a standalone Restart registered it with atexit, skipped here
     std::_Exit(code);
   }
 #endif
