@@ -16,7 +16,6 @@
 #include <cctype>
 #include <chrono>
 #include <cstring>
-#include <cwctype>
 #include <fstream>
 #include <set>
 #include <system_error>
@@ -163,13 +162,23 @@ namespace platf::clipboard {
       return out;
     }
 
-    /// Case-insensitive key for duplicate detection (Windows paths ignore case).
+    /// Case-insensitive key for duplicate detection (Windows paths ignore case): the Unicode
+    /// uppercase mapping of the invariant locale, not only ASCII, close to how NTFS compares names.
+    /// Hermit uses QString::toUpper() for the same check.
     std::wstring fold(const std::string &utf8) {
       std::wstring w = widen(utf8);
-      for (auto &c : w) {
-        c = static_cast<wchar_t>(std::towlower(c));
+      if (w.empty()) {
+        return w;
       }
-      return w;
+      int n = LCMapStringEx(LOCALE_NAME_INVARIANT, LCMAP_UPPERCASE, w.data(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr, 0);
+      if (n <= 0) {
+        return w;
+      }
+      std::wstring upper(static_cast<std::size_t>(n), L'\0');
+      if (LCMapStringEx(LOCALE_NAME_INVARIANT, LCMAP_UPPERCASE, w.data(), static_cast<int>(w.size()), upper.data(), n, nullptr, nullptr, 0) != n) {
+        return w;
+      }
+      return upper;
     }
 
     void put_u32(std::string &out, std::uint32_t v) {
@@ -492,7 +501,8 @@ namespace platf::clipboard {
         end = path.size();
       }
       std::string part = path.substr(start, end - start);
-      if (part.empty() || part == "." || part == ".." || part.size() > 255) {
+      // NTFS limits a name to 255 UTF-16 code units (Hermit measures QString::length() the same way)
+      if (part.empty() || part == "." || part == ".." || widen(part).size() > 255) {
         return false;
       }
       for (unsigned char c : part) {

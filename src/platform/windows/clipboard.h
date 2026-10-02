@@ -68,7 +68,8 @@ namespace platf::clipboard {
     std::string data;  ///< file contents (empty for directories)
   };
 
-  /// True for a relative path that is safe to create under a staging directory on Windows.
+  /// True for a relative path that is safe to create under a staging directory on Windows
+  /// (names of at most 255 UTF-16 code units, no reserved names or characters).
   bool is_safe_relative_path(const std::string &path);
 
   std::string encode_archive(const std::vector<archive_entry> &entries);

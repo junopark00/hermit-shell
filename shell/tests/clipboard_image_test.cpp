@@ -173,6 +173,22 @@ int main() {
     std::string label = std::string("rejects \"") + bad + "\"";
     check(label.c_str(), !cb::is_safe_relative_path(bad));
   }
+  {
+    // Names are limited to 255 UTF-16 code units (the NTFS limit), not 255 UTF-8 bytes.
+    auto repeat = [](const std::string &unit, int n) {
+      std::string out;
+      for (int i = 0; i < n; ++i) {
+        out += unit;
+      }
+      return out;
+    };
+    check("accepts 255 ASCII characters", cb::is_safe_relative_path(repeat("a", 255)));
+    check("rejects 256 ASCII characters", !cb::is_safe_relative_path(repeat("a", 256)));
+    check("accepts 255 Hangul syllables (765 bytes)", cb::is_safe_relative_path(repeat("한", 255)));
+    check("rejects 256 Hangul syllables", !cb::is_safe_relative_path(repeat("한", 256)));
+    check("accepts 127 emoji plus one letter (255 code units)", cb::is_safe_relative_path(repeat("😀", 127) + "a"));
+    check("rejects 128 emoji (256 code units)", !cb::is_safe_relative_path(repeat("😀", 128)));
+  }
 
   std::printf("Archive encode/decode\n");
   std::vector<cb::archive_entry> sample = {
@@ -198,6 +214,15 @@ int main() {
     check(label, !cb::decode_archive(cb::encode_archive(entries), decoded, error) && !error.empty());
   };
   rejects("duplicate path (case-insensitive)", {{false, "A.txt", "1"}, {false, "a.TXT", "2"}});
+  rejects("duplicate path (Latin-1 case)", {{false, "Ärger.txt", "1"}, {false, "ärger.txt", "2"}});
+  rejects("duplicate path (Greek case)", {{false, "ΣΟΦΙΑ.txt", "1"}, {false, "σοφια.txt", "2"}});
+  rejects("duplicate folder (Cyrillic case)", {{true, "Папка", ""}, {true, "папка", ""}});
+  {
+    std::vector<cb::archive_entry> decoded;
+    std::string error;
+    check("different non-ASCII names are not duplicates",
+          cb::decode_archive(cb::encode_archive({{false, "한글.txt", "1"}, {false, "Ärger.txt", "2"}, {false, "ärgerlich.txt", "3"}}), decoded, error));
+  }
   rejects("file used as a directory", {{false, "a", "1"}, {false, "a/b", "2"}});
   rejects("unsafe path inside archive", {{false, "../evil", "x"}});
   rejects("empty archive", {});
