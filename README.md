@@ -94,10 +94,14 @@ Apollo is disabled, not deleted; see [docs/tools.md](docs/tools.md#migrating-fro
 3. In Hermit or Moonlight, add the PC (it is usually found automatically on the local network). The
    client shows a four-digit PIN.
 4. Enter the PIN on the **Pairing** page of the web UI (or click the pairing notification of the Shell
-   tray icon). Give the device a name you will recognize.
+   tray icon). Give the device a name you will recognize and choose its permissions beside the PIN:
+   **Full access** (the default), **Streaming and input** (apps, viewing, launching and all inputs, but
+   no clipboard, file transfer or server commands), **View only** or **Custom** with the individual
+   toggles. The page remembers the last choice.
 
-The first device you pair gets every permission. Devices paired later can view and list apps only until
-you grant more permissions on the **Pairing** page.
+The permissions of a paired device can be changed at any time under **Device Management** on the same
+page. Hermit and Hermit for Android open the Pairing page with the PIN and device name already filled
+in; you only check the permissions and press **Pair**.
 
 ## Configuration
 

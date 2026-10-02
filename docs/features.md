@@ -41,6 +41,31 @@ file that still uses the Sunshine key `sunshine_name` is read as well.
 - **Theme**: neutral grey layers with one teal accent, in light and dark. Fonts (IBM Plex Sans) are served
   by the host, so the UI works without internet access.
 
+## Pairing
+
+The **Pairing** page (`/pin`) takes the four-digit PIN shown by the client, an optional device name and
+the permissions the device gets, so a new device is ready to use without a second visit to the device
+editor.
+
+| Preset | Permissions |
+|---|---|
+| **Full access** (default) | Everything: all inputs, clipboard read and write, file upload and download, server commands, and listing, viewing and launching apps |
+| **Streaming and input** | Listing, viewing and launching apps and all inputs; no clipboard, file transfer or server commands |
+| **View only** | Listing apps and viewing streams (what Apollo gives a second device) |
+| **Custom** | The same toggles as the device editor |
+
+- The summary beside the preset shows what the device will get. The last choice, including the custom
+  toggles, is kept in the browser (`localStorage`) and is the starting point for the next pairing.
+- Permissions can be changed later under **Device Management** on the same page.
+- `POST /api/pin` takes `{"pin": "1234", "name": "My phone", "perm": <uint32>}`. `perm` is the
+  permission bit set (the values of the `PERM` enum in `src/crypto.h`, masked with `_all`; full access is
+  `0x071F1F00`). Without it the first paired device gets every permission and later ones list and view,
+  as before.
+- **Prefill for companion clients**: Hermit and Hermit for Android open
+  `https://<host>:47990/pin#pin=1234&name=<URL-encoded device name>`. The fragment never leaves the
+  browser; the page fills the fields from it, focuses the **Pair** button and removes the fragment from
+  the address (so a reload starts clean). Nothing is sent until the user presses **Pair**.
+
 ## Virtual display
 
 Shell uses the SudoVDA driver to create a virtual display for a session, at the resolution and refresh
