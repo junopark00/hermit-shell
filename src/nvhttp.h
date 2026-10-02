@@ -126,10 +126,17 @@ namespace nvhttp {
      * @brief used as a security measure to prevent out of order calls
      */
     PAIR_PHASE last_phase = PAIR_PHASE::NONE;
+
+    /// Shell: when the client's getservercert request arrived; the PIN goes to the newest waiting
+    /// session, and one that waited longer than its client does is dropped.
+    std::chrono::steady_clock::time_point created = std::chrono::steady_clock::now();
   };
 
   /**
    * @brief removes the temporary pairing session
+   * @details Shell: answers the request the session still keeps waiting for a PIN, if any. Like the
+   * pairing phases below, it expects the caller to hold the lock of the pairing sessions (taken by
+   * the request handlers and pin()).
    * @param sess
    */
   void remove_session(const pair_session_t &sess);

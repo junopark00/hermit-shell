@@ -69,7 +69,20 @@ editor.
   reasons (`status` false) are `no-client` (no device is waiting for a PIN), `invalid-pin` (not four
   digits) and `failed` (the waiting device's request was invalid; it was told pairing failed).
 - A device that starts pairing again replaces its earlier unfinished attempt (after a wrong PIN or a
-  dropped connection), so a wrong PIN never blocks the next try.
+  dropped connection), so a wrong PIN never blocks the next try. If the earlier attempt is still
+  waiting for a PIN, its request is answered with a failed pairing (`status_code` 400, "Superseded by
+  a newer pairing attempt") instead of being left to time out.
+- A device waits up to 5 minutes for the PIN. Its request then times out (the HTTP server's
+  300-second limit) and Shell drops the attempt, so a PIN entered later never goes to a device that
+  gave up; start pairing again on the device. With several devices waiting, the PIN goes to the one
+  that started pairing last.
+- `GET /unpair?uniqueid=<id>` on the HTTP port: clients send it after a pairing failed on their side
+  (a wrong PIN) and from their own Unpair command. Shell drops the unfinished pairing of that
+  uniqueid, answering a request it kept waiting for a PIN, and replies `<root status_code="200"/>`,
+  so the client reports the wrong PIN. It never removes a paired device: without an unfinished
+  pairing the reply is `status_code` 400 ("Unpair this device in the host's web UI"), so a client's
+  Unpair command shows an error instead of a false success. Paired devices are removed under
+  **Device Management**. Over HTTPS `/unpair` still answers 404.
 - **Prefill for companion clients**: Hermit and Hermit for Android open
   `https://<host>:47990/pin#pin=1234&name=<URL-encoded device name>`. The fragment never leaves the
   browser; the page fills the fields from it, focuses the **Pair** button and removes the fragment from

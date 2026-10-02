@@ -153,6 +153,11 @@ namespace nvhttp {
 
   // uniqueID, session
   std::unordered_map<std::string, pair_session_t> map_id_sess;
+  // Shell: guards map_id_sess, which the HTTP and HTTPS server threads (pair, unpair) and the web UI
+  // thread (pin) all use. Only those entry points and start() take it; everything they call
+  // (the pairing phases, fail_pair, remove_session, answer_waiting_request, drop_stale_sessions)
+  // expects it held and never takes it, so nothing locks it twice.
+  std::mutex map_id_sess_mutex;
   client_t client_root;
   std::atomic<uint32_t> session_id_counter;
 
@@ -475,17 +480,81 @@ namespace nvhttp {
     return launch_session;
   }
 
+  /**
+   * @brief Shell: answers the getservercert request a session keeps waiting for the PIN, if there is
+   * one, with a failed pairing. A session dropped with its request unanswered left the client waiting
+   * until the connection timed out, and it then reported a closed connection instead of the reason.
+   * Expects map_id_sess_mutex held.
+   */
+  void answer_waiting_request(pair_session_t &sess, const std::string &why) {
+    auto reply = [&](auto &response) {
+      if (!response) {
+        return;  // already answered (moved out by pin) or never waiting
+      }
+      pt::ptree tree;
+      tree.put("root.paired", 0);
+      tree.put("root.<xmlattr>.status_code", 400);
+      tree.put("root.<xmlattr>.status_message", why);
+      std::ostringstream data;
+      pt::write_xml(data, tree);
+      response->write(data.str());
+      response->close_connection_after_response = true;
+      response.reset();  // releasing it sends the reply
+    };
+    auto &response = sess.async_insert_pin.response;
+    if (response.has_left()) {
+      reply(response.left());
+    } else if (response.has_right()) {
+      reply(response.right());
+    }
+  }
+
+  /// Shell: erases the session of uniqueid, answering its waiting request first. Expects
+  /// map_id_sess_mutex held. Returns whether there was one.
+  bool erase_session(const std::string &unique_id, const std::string &why) {
+    auto it = map_id_sess.find(unique_id);
+    if (it == std::end(map_id_sess)) {
+      return false;
+    }
+    answer_waiting_request(it->second, why);
+    map_id_sess.erase(it);
+    return true;
+  }
+
+  /// Shell: how long a client waits for the PIN. Its getservercert request is cut by the HTTP
+  /// server's timeout_content (set to this in start(); SimpleWeb's default), so a session older
+  /// than this no longer has a client to answer.
+  constexpr auto pair_pin_timeout = std::chrono::seconds(300);
+
+  /// Shell: drops the sessions still waiting for a PIN after pair_pin_timeout; pin() would otherwise
+  /// hand the PIN to a client that gave up. Expects map_id_sess_mutex held.
+  void drop_stale_sessions() {
+    auto now = std::chrono::steady_clock::now();
+    for (auto it = std::begin(map_id_sess); it != std::end(map_id_sess);) {
+      if (it->second.last_phase == PAIR_PHASE::NONE && now - it->second.created >= pair_pin_timeout) {
+        BOOST_LOG(info) << "Pairing request of [" << it->second.client.name << "] expired: no PIN was entered within 5 minutes";
+        answer_waiting_request(it->second, "No PIN was entered in time");
+        it = map_id_sess.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+
   void remove_session(const pair_session_t &sess) {
     // Shell: a copy, since the key would otherwise live in the session being erased
     const auto unique_id = sess.client.uniqueID;
-    map_id_sess.erase(unique_id);
+    erase_session(unique_id, "Pairing ended");
   }
 
   void fail_pair(pair_session_t &sess, pt::ptree &tree, const std::string status_msg) {
     tree.put("root.paired", 0);
     tree.put("root.<xmlattr>.status_code", 400);
     tree.put("root.<xmlattr>.status_message", status_msg);
-    remove_session(sess);  // Security measure, delete the session when something went wrong and force a re-pair
+    // Security measure, delete the session when something went wrong and force a re-pair.
+    // Shell: a request it still keeps waiting for the PIN gets the same reason.
+    const auto unique_id = sess.client.uniqueID;
+    erase_session(unique_id, status_msg);
     BOOST_LOG(warning) << "Pair attempt failed due to " << status_msg;
   }
 
@@ -754,23 +823,29 @@ namespace nvhttp {
         sess.client.uniqueID = std::move(uniqID);
         sess.client.name = std::move(deviceName);
         sess.client.cert = util::from_hex_vec(get_arg(args, "clientcert"), true);
+        sess.async_insert_pin.salt = get_arg(args, "salt");
 
         BOOST_LOG(debug) << sess.client.cert;
-        // Shell: a new pairing attempt replaces any earlier session of this uniqueid (a wrong PIN
-        // leaves one at SERVERCHALLENGERESP, a dropped handshake at GETSERVERCERT). Kept, it would
-        // never be offered a PIN again, and stock clients all share one uniqueid. Its pending
-        // request, if any, is dropped unanswered.
-        map_id_sess.erase(sess.client.uniqueID);
-        auto ptr = map_id_sess.emplace(sess.client.uniqueID, std::move(sess)).first;
 
-        ptr->second.async_insert_pin.salt = std::move(get_arg(args, "salt"));
-
-        if (config::shell.flags[config::flag::PIN_STDIN]) {
-          std::string pin;
-
+        // Shell: read before the sessions are locked, so a PIN typed slowly holds up nobody else
+        const bool pin_stdin = config::shell.flags[config::flag::PIN_STDIN];
+        std::string pin;
+        if (pin_stdin) {
           std::cout << "Please insert pin: "sv;
           std::getline(std::cin, pin);
+        }
 
+        // Shell: released before fg writes the reply
+        std::lock_guard lock {map_id_sess_mutex};
+        drop_stale_sessions();
+        // Shell: a new pairing attempt replaces any earlier session of this uniqueid (a wrong PIN
+        // leaves one at SERVERCHALLENGERESP, a dropped handshake at GETSERVERCERT). Kept, it would
+        // never be offered a PIN again, and stock clients all share one uniqueid. A request it still
+        // keeps waiting for the PIN is told so, rather than left to time out.
+        erase_session(sess.client.uniqueID, "Superseded by a newer pairing attempt");
+        auto ptr = map_id_sess.emplace(sess.client.uniqueID, std::move(sess)).first;
+
+        if (pin_stdin) {
           // Shell: answered here; the phase checks below are for the later requests
           getservercert(ptr->second, tree, pin);
           return;
@@ -790,6 +865,8 @@ namespace nvhttp {
       }
     }
 
+    // Shell: released before fg writes the reply
+    std::lock_guard lock {map_id_sess_mutex};
     auto sess_it = map_id_sess.find(uniqID);
     if (sess_it == std::end(map_id_sess)) {
       tree.put("root.<xmlattr>.status_code", 400);
@@ -813,8 +890,54 @@ namespace nvhttp {
     }
   }
 
+  /**
+   * @brief Shell: GET /unpair?uniqueid=<id> over HTTP. Clients send it after a pairing failed on
+   * their side (a wrong PIN), and from their own Unpair command. It drops only an unfinished pairing
+   * of that uniqueid (answering a request it keeps waiting for the PIN) and then replies 200, which
+   * lets the client report the wrong PIN. Paired devices are removed in the web UI only, so without
+   * an unfinished pairing the reply is 400, and the client does not take the device for unpaired.
+   */
+  void unpair(resp_http_t response, req_http_t request) {
+    print_req<SimpleWeb::HTTP>(request);
+
+    pt::ptree tree;
+
+    auto fg = util::fail_guard([&]() {
+      std::ostringstream data;
+
+      pt::write_xml(data, tree);
+      response->write(data.str());
+      response->close_connection_after_response = true;
+    });
+
+    auto args = request->parse_query_string();
+    auto it = args.find("uniqueid"s);
+    if (it == std::end(args)) {
+      tree.put("root.<xmlattr>.status_code", 400);
+      tree.put("root.<xmlattr>.status_message", "Missing uniqueid parameter");
+      return;
+    }
+
+    bool dropped;
+    {
+      std::lock_guard lock {map_id_sess_mutex};
+      dropped = erase_session(it->second, "Pairing was cancelled");
+    }
+
+    if (dropped) {
+      BOOST_LOG(info) << "Unfinished pairing dropped at the client's request"sv;
+      tree.put("root.<xmlattr>.status_code", 200);
+    } else {
+      tree.put("root.<xmlattr>.status_code", 400);
+      tree.put("root.<xmlattr>.status_message", "Unpair this device in the host's web UI");
+    }
+  }
+
   pin_result_e pin(std::string pin, std::string name, std::optional<crypto::PERM> perm) {
     pt::ptree tree;
+    // Shell: held while the session is chosen and updated, released before the client is answered
+    std::unique_lock lock {map_id_sess_mutex};
+    drop_stale_sessions();
     if (map_id_sess.empty()) {
       return pin_result_e::no_client;
     }
@@ -841,12 +964,17 @@ namespace nvhttp {
     // Shell: the session whose client is waiting for the PIN. A session already past getservercert
     // (Pair pressed twice while a client is mid-pairing) or without a request to answer is passed
     // over: getservercert would fail it, and fail_pair erases the session a reference points to.
+    // Of several waiting clients the newest gets it: the one whose PIN was most likely just shown.
     auto has_response = [](const auto &response) {
       return (response.has_left() && response.left()) || (response.has_right() && response.right());
     };
-    auto sess_it = std::find_if(std::begin(map_id_sess), std::end(map_id_sess), [&](const auto &entry) {
-      return entry.second.last_phase == PAIR_PHASE::NONE && has_response(entry.second.async_insert_pin.response);
-    });
+    auto sess_it = std::end(map_id_sess);
+    for (auto it = std::begin(map_id_sess); it != std::end(map_id_sess); ++it) {
+      if (it->second.last_phase == PAIR_PHASE::NONE && has_response(it->second.async_insert_pin.response) &&
+          (sess_it == std::end(map_id_sess) || it->second.created > sess_it->second.created)) {
+        sess_it = it;
+      }
+    }
     if (sess_it == std::end(map_id_sess)) {
       BOOST_LOG(warning) << "No client is waiting for a pin";
       return pin_result_e::no_client;
@@ -870,6 +998,8 @@ namespace nvhttp {
     // Shell: 200 only means the client got the reply it checks the PIN with; a wrong PIN shows
     // when the client ends the pairing, after this returns.
     bool sent = tree.get<int>("root.<xmlattr>.status_code", 0) == 200;
+
+    lock.unlock();
 
     // response to the request for pin
     std::ostringstream data;
@@ -2558,10 +2688,16 @@ namespace nvhttp {
     http_server.default_resource["GET"] = not_found<SimpleWeb::HTTP>;
     http_server.resource["^/serverinfo$"]["GET"] = serverinfo<SimpleWeb::HTTP>;
     http_server.resource["^/pair$"]["GET"] = pair<SimpleWeb::HTTP>;
+    // Shell: HTTP only, where clients send it. Over HTTPS a client means its own paired device,
+    // which is removed in the web UI, so that keeps answering 404.
+    http_server.resource["^/unpair$"]["GET"] = unpair;
 
     http_server.config.reuse_address = true;
     http_server.config.address = net::af_to_any_address_string(address_family);
     http_server.config.port = port_http;
+    // Shell: SimpleWeb's default, stated because it is how long a client waits for the PIN
+    // (pair_pin_timeout): its getservercert request stays open until the PIN is entered.
+    http_server.config.timeout_content = static_cast<long>(pair_pin_timeout.count());
 
     auto accept_and_run = [&](auto *http_server) {
       try {
@@ -2587,7 +2723,13 @@ namespace nvhttp {
     // Wait for any event
     shutdown_event->view();
 
-    map_id_sess.clear();
+    {
+      std::lock_guard lock {map_id_sess_mutex};
+      for (auto &[unique_id, sess] : map_id_sess) {
+        answer_waiting_request(sess, "The host is shutting down");
+      }
+      map_id_sess.clear();
+    }
 
     https_server.stop();
     http_server.stop();

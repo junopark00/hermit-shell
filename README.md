@@ -97,7 +97,8 @@ Apollo is disabled, not deleted; see [docs/tools.md](docs/tools.md#migrating-fro
    tray icon). Give the device a name you will recognize and choose its permissions beside the PIN:
    **Full access** (the default), **Streaming and input** (apps, viewing, launching and all inputs, but
    no clipboard, file transfer or server commands), **View only** or **Custom** with the individual
-   toggles. The page remembers the last choice.
+   toggles. The page remembers the last choice. The client waits about 5 minutes for the PIN; after
+   that, start pairing again on the client.
 
 The permissions of a paired device can be changed at any time under **Device Management** on the same
 page. Hermit and Hermit for Android open the Pairing page with the PIN and device name already filled
