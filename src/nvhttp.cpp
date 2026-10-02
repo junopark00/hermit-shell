@@ -1587,8 +1587,7 @@ namespace nvhttp {
   /// names that differ only in case, a file also used as a folder, or nothing left once links are
   /// skipped): 422, not a host failure.
   bool is_file_content_error(const std::string &error) {
-    return error.starts_with("unsupported file name") || error.starts_with("duplicate name") || error == "nothing to copy" ||
-           error == "unsafe path" || error == "duplicate path" || error == "file used as directory";
+    return !platf::clipboard::content_error_reason(error).empty();
   }
 
   /// Status for a failed type=files or type=filelist: 413 limits, 422 content, 500 everything else
@@ -1601,6 +1600,23 @@ namespace nvhttp {
       return SimpleWeb::StatusCode::client_error_unprocessable_entity;
     }
     return SimpleWeb::StatusCode::server_error_internal_server_error;
+  }
+
+  /// Body of a failed file reply: the error as plain text, after the machine-readable reason on a
+  /// line of its own for a 422 (unsupported-name, duplicate-name, nothing-to-copy).
+  std::string file_error_body(const std::string &error) {
+    auto reason = platf::clipboard::content_error_reason(error);
+    return reason.empty() ? error : std::string {reason} + "\n" + error;
+  }
+
+  /// Shell: 503 when another program kept the clipboard open through every retry. Clients keep
+  /// their clipboard sequence number and try again later.
+  constexpr auto clipboard_busy_body = "clipboard-busy\nanother program is using the clipboard; try again later"sv;
+
+  void refuse_clipboard_busy(const resp_https_t &response, const std::string &client, std::string_view what) {
+    BOOST_LOG(info) << "Clipboard " << what << " for [" << client << "] not done: another program is using the clipboard";
+    response->write(SimpleWeb::StatusCode::server_error_service_unavailable, clipboard_busy_body);
+    response->close_connection_after_response = true;
   }
 
   /// Status for an archive decode_archive rejected (POST type=files): 413 limits, 422 content,
@@ -2135,11 +2151,22 @@ namespace nvhttp {
       return;
     }
     if (clipboard_type == "image"sv) {
-      // Empty body means there is no image; 413 that there is one, but over the size limit.
-      bool too_large = false;
-      auto png = platf::clipboard::get_image_png(too_large);
-      if (too_large) {
+      // Empty body means there is no image; 413 that there is one, but over the size limit; 422 that
+      // there is one that cannot be read or converted to PNG; 503 that the clipboard is busy.
+      std::string png;
+      auto status = platf::clipboard::get_image_png(png);
+      if (status == platf::clipboard::status_e::busy) {
+        refuse_clipboard_busy(response, named_cert_p->name, "image read"sv);
+        return;
+      }
+      if (status == platf::clipboard::status_e::too_large) {
         response->write(SimpleWeb::StatusCode::client_error_payload_too_large);
+        response->close_connection_after_response = true;
+        return;
+      }
+      if (status != platf::clipboard::status_e::ok && status != platf::clipboard::status_e::none) {
+        BOOST_LOG(info) << "Clipboard image not sent to [" << named_cert_p->name << "]: it cannot be converted to PNG";
+        response->write(SimpleWeb::StatusCode::client_error_unprocessable_entity, std::string {platf::clipboard::reason_image_not_convertible} + "\nthe clipboard image cannot be converted to PNG");
         response->close_connection_after_response = true;
         return;
       }
@@ -2164,7 +2191,11 @@ namespace nvhttp {
       // Sequence number first, as for type=info. Folders are expanded now, files are read only
       // when the client asks for them (type=filedata).
       auto seq = platf::clipboard::sequence();
-      auto roots = platf::clipboard::get_file_drop_list();
+      std::vector<std::filesystem::path> roots;
+      if (platf::clipboard::get_file_drop_list(roots) == platf::clipboard::status_e::busy) {
+        refuse_clipboard_busy(response, named_cert_p->name, "file list"sv);
+        return;
+      }
       if (roots.empty()) {
         response->write(SimpleWeb::StatusCode::success_ok, ""sv);  // no files on the clipboard
         return;
@@ -2183,7 +2214,7 @@ namespace nvhttp {
         }
         if (!listed) {
           BOOST_LOG(info) << "Clipboard file list not sent to [" << client << "]: " << error;
-          return file_reply_t {file_error_status(error), error, {}};
+          return file_reply_t {file_error_status(error), file_error_body(error), {}};
         }
         snapshot->id = crypto::rand_alphabet(16, "0123456789abcdef"sv);
         std::uint64_t total = 0;
@@ -2198,7 +2229,11 @@ namespace nvhttp {
       return;
     }
     if (clipboard_type == "files"sv) {
-      auto roots = platf::clipboard::get_file_drop_list();
+      std::vector<std::filesystem::path> roots;
+      if (platf::clipboard::get_file_drop_list(roots) == platf::clipboard::status_e::busy) {
+        refuse_clipboard_busy(response, named_cert_p->name, "files"sv);
+        return;
+      }
       if (roots.empty()) {
         response->write(SimpleWeb::StatusCode::success_ok, ""sv);  // no files on the clipboard
         return;
@@ -2215,15 +2250,30 @@ namespace nvhttp {
         }
         if (!packed) {
           BOOST_LOG(info) << "Clipboard files not sent to [" << client << "]: " << error;
-          return file_reply_t {file_error_status(error), error, {}};
+          return file_reply_t {file_error_status(error), file_error_body(error), {}};
         }
         return file_reply_t {SimpleWeb::StatusCode::success_ok, std::move(archive), "application/octet-stream"};
       });
       return;
     }
-#endif
 
+    // Busy (503) and unreadable (500) are told apart from an empty clipboard (empty 200), which is
+    // all stock clients get when there is no text.
+    std::string content;
+    auto status = platf::clipboard::get_text(content);
+    if (status == platf::clipboard::status_e::busy) {
+      refuse_clipboard_busy(response, named_cert_p->name, "text read"sv);
+      return;
+    }
+    if (status == platf::clipboard::status_e::failed) {
+      BOOST_LOG(warning) << "Clipboard text not sent to [" << named_cert_p->name << "]: it cannot be read";
+      response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "the clipboard text cannot be read"sv);
+      response->close_connection_after_response = true;
+      return;
+    }
+#else
     std::string content = platf::get_clipboard();
+#endif
     response->write(content);
     return;
   }
@@ -2279,6 +2329,8 @@ namespace nvhttp {
 
     bool success = false;
 #ifdef _WIN32
+    // Shell: ok, or why the clipboard was not set (busy is answered with 503)
+    auto status = platf::clipboard::status_e::failed;
     if (clipboard_type == "image"sv) {
       // 413 for an image over the byte or pixel limit, so clients can say it is too large
       std::uint32_t width = 0, height = 0;
@@ -2288,7 +2340,13 @@ namespace nvhttp {
         response->close_connection_after_response = true;
         return;
       }
-      success = platf::clipboard::set_image_png(content);
+      status = platf::clipboard::set_image_png(content);
+      if (status == platf::clipboard::status_e::not_convertible) {
+        // Not a PNG at all: the client's mistake, not a host failure
+        response->write(SimpleWeb::StatusCode::client_error_unprocessable_entity, std::string {platf::clipboard::reason_image_not_convertible} + "\nthe data is not a PNG image");
+        response->close_connection_after_response = true;
+        return;
+      }
     } else if (clipboard_type == "files"sv) {
       if (!(named_cert_p->perm & PERM::file_upload)) {
         BOOST_LOG(debug) << "Permission Upload Files denied for [" << named_cert_p->name << "]";
@@ -2307,7 +2365,7 @@ namespace nvhttp {
         std::string error;
         if (!platf::clipboard::decode_archive(content, entries, error)) {
           BOOST_LOG(info) << "Clipboard files from [" << client << "] rejected: " << error;
-          return file_reply_t {archive_error_status(error), error, {}};
+          return file_reply_t {archive_error_status(error), file_error_body(error), {}};
         }
         content.clear();
         content.shrink_to_fit();
@@ -2322,7 +2380,12 @@ namespace nvhttp {
         if (!extracted) {
           BOOST_LOG(warning) << "Clipboard files from [" << client << "] not saved: " << error;
         }
-        if (!extracted || !platf::clipboard::set_file_drop_list(top_level)) {
+        auto placed = extracted ? platf::clipboard::set_file_drop_list(top_level) : platf::clipboard::status_e::failed;
+        if (placed == platf::clipboard::status_e::busy) {
+          BOOST_LOG(info) << "Clipboard files from [" << client << "] not placed: another program is using the clipboard";
+          return file_reply_t {SimpleWeb::StatusCode::server_error_service_unavailable, std::string {clipboard_busy_body}, {}};
+        }
+        if (placed != platf::clipboard::status_e::ok) {
           BOOST_LOG(debug) << "Setting clipboard failed!";
           return file_reply_t {SimpleWeb::StatusCode::server_error_internal_server_error, {}, {}};
         }
@@ -2330,11 +2393,17 @@ namespace nvhttp {
         return file_reply_t {SimpleWeb::StatusCode::success_ok, "seq=" + std::to_string(platf::clipboard::sequence()) + "\n", {}};
       });
       return;
-    } else
-#endif
-    {
-      success = platf::set_clipboard(content);
+    } else {
+      status = platf::clipboard::set_text(content);
     }
+    if (status == platf::clipboard::status_e::busy) {
+      refuse_clipboard_busy(response, named_cert_p->name, clipboard_type == "image"sv ? "image write"sv : "text write"sv);
+      return;
+    }
+    success = status == platf::clipboard::status_e::ok;
+#else
+    success = platf::set_clipboard(content);
+#endif
 
     if (!success) {
       BOOST_LOG(debug) << "Setting clipboard failed!";

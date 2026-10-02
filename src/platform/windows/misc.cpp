@@ -101,10 +101,6 @@ namespace {
 
 namespace bp = boost::process;
 
-static std::string ensureCrLf(const std::string& utf8Str);
-static std::wstring getClipboardData();
-static int setClipboardData(const std::wstring& utf16Str);
-
 using namespace std::literals;
 
 namespace platf {
@@ -1802,105 +1798,31 @@ namespace platf {
     return std::make_unique<win32_high_precision_timer>();
   }
 
+  // Shell: the text is read and written in clipboard.cpp, whose status nvhttp uses to tell a busy
+  // clipboard (503) from an empty one.
   std::string
   get_clipboard() {
-    std::string currentClipboard = to_utf8(getClipboardData());
-    return currentClipboard;
+    std::string text;
+    auto status = clipboard::get_text(text);
+    if (status == clipboard::status_e::busy) {
+      BOOST_LOG(warning) << "Failed to open clipboard."sv;
+    } else if (status == clipboard::status_e::failed) {
+      BOOST_LOG(warning) << "Failed to read clipboard text."sv;
+    }
+    return text;
   }
 
   bool
   set_clipboard(const std::string& content) {
-    std::wstring cpContent = from_utf8(ensureCrLf(content));
-    return !setClipboardData(cpContent);
+    auto status = clipboard::set_text(content);
+    if (status == clipboard::status_e::busy) {
+      BOOST_LOG(warning) << "Failed to open clipboard."sv;
+    } else if (status != clipboard::status_e::ok) {
+      BOOST_LOG(warning) << "Failed to set clipboard text."sv;
+    }
+    return status == clipboard::status_e::ok;
   }
 }  // namespace platf
-
-static std::string ensureCrLf(const std::string& utf8Str) {
-    std::string result;
-    result.reserve(utf8Str.size() + utf8Str.size() / 2); // Reserve extra space
-
-    for (size_t i = 0; i < utf8Str.size(); ++i) {
-        if (utf8Str[i] == '\n' && (i == 0 || utf8Str[i - 1] != '\r')) {
-            result += '\r'; // Add \r before \n if not present
-        }
-        result += utf8Str[i]; // Always add the current character
-    }
-
-    return result;
-}
-
-static std::wstring getClipboardData() {
-  if (!platf::clipboard::open_with_retry()) {
-    BOOST_LOG(warning) << "Failed to open clipboard.";
-    return L"";
-  }
-
-  HANDLE hData = GetClipboardData(CF_UNICODETEXT);
-  if (hData == nullptr) {
-    BOOST_LOG(warning) << "No text data in clipboard or failed to get data.";
-    CloseClipboard();
-    return L"";
-  }
-
-  wchar_t* pszText = static_cast<wchar_t*>(GlobalLock(hData));
-  if (pszText == nullptr) {
-    BOOST_LOG(warning) << "Failed to lock clipboard data.";
-    CloseClipboard();
-    return L"";
-  }
-
-  std::wstring ret = pszText;
-
-  GlobalUnlock(hData);
-  CloseClipboard();
-
-  return ret;
-}
-
-static int setClipboardData(const std::wstring& utf16Str) {
-  if (!platf::clipboard::open_with_retry()) {
-    BOOST_LOG(warning) << "Failed to open clipboard.";
-    return 1;
-  }
-
-  if (!EmptyClipboard()) {
-    BOOST_LOG(warning) << "Failed to empty clipboard.";
-    CloseClipboard();
-    return 1;
-  }
-
-  // Allocate global memory for the clipboard text
-  HGLOBAL hGlobal = GlobalAlloc(GMEM_MOVEABLE, utf16Str.size() * 2 + 2);
-  if (hGlobal == nullptr) {
-    BOOST_LOG(warning) << "Failed to allocate global memory.";
-    CloseClipboard();
-    return 1;
-  }
-
-  // Lock the global memory and copy the text
-  char* pGlobal = static_cast<char*>(GlobalLock(hGlobal));
-  if (pGlobal == nullptr) {
-    BOOST_LOG(warning) << "Failed to lock global memory.";
-    GlobalFree(hGlobal);
-    CloseClipboard();
-    return 1;
-  }
-
-  memcpy(pGlobal, utf16Str.c_str(), utf16Str.size() * 2 + 2);
-  GlobalUnlock(hGlobal);
-
-  // Set the clipboard data
-  if (SetClipboardData(CF_UNICODETEXT, hGlobal) == nullptr) {
-    BOOST_LOG(warning) << "Failed to set clipboard data.";
-    GlobalFree(hGlobal);
-    CloseClipboard();
-    return 1;
-  }
-
-  CloseClipboard();
-
-  return 0;
-}
 
 #ifdef BOOST_PROCESS_VERSION
   #undef BOOST_PROCESS_VERSION

@@ -173,24 +173,43 @@ The upstream `/actions/clipboard` endpoint carries text only. On Windows Shell a
 
 - `POST` replies with the new change number (`seq=`), so a client does not read back what it wrote.
 - `POST type=image` answers 413 when the PNG is over 32 MB or has more than 8192 × 8192 pixels
-  (width × height, read from its header). `GET type=image` answers 413 when the clipboard holds an
-  image whose PNG is over 32 MB; an empty 200 reply means the clipboard holds no image.
+  (width × height, read from its header), 422 `image-not-convertible` when the data is not a PNG at
+  all, and 500 when a PNG cannot be decoded or placed. `GET type=image` answers 413 when the
+  clipboard holds an image whose PNG is over 32 MB, and 422 `image-not-convertible` when it holds an
+  image whose data cannot be read or converted to PNG; an empty 200 reply means the clipboard holds
+  no image.
 - `POST type=files` answers 413 when the archive is over its limits (256 MB of file data, 1,000
-  entries), 422 when a path in it cannot be created as it is (a path Windows does not allow, two
-  paths that differ only in case, a file also used as a folder) and 400 for a malformed archive;
-  the reason is in the body as plain text.
+  entries), 422 when a path in it cannot be created as it is (`unsupported-name` for a path Windows
+  does not allow, `duplicate-name` for two paths that differ only in case or a file also used as a
+  folder) and 400 for a malformed archive, including one with no entries.
 - Received files are checked first (paths, duplicates, size), then extracted with the signed-in user's
   rights to `%LOCALAPPDATA%\Temp\ShellClipboard` and placed on the clipboard as CF_HDROP ("copy").
   Files that are sent are read with the user's rights; symbolic links and junctions are not
   followed. Other reparse points, such as OneDrive Files On-Demand placeholders, are ordinary files:
   reading one fetches its content.
-- When another program holds the clipboard, Shell retries briefly.
+- When another program holds the clipboard, Shell retries for about 0.3 seconds. If it is still
+  held, `GET type=text`, `type=image`, `type=files` and `type=filelist` and every `POST` answer 503
+  with the body `clipboard-busy` and a line of text; clients keep their last change number and try
+  again later. `type=info` and `type=filedata` never wait for the clipboard. An empty 200 reply
+  (`type=text`, `type=image`, `type=files`, `type=filelist`) means only that the clipboard holds
+  nothing of that type. For `type=text` this is what clients that only know text see as well; real
+  text is still a 200 with the text.
+- Every 422 body starts with a machine-readable reason on a line of its own, then a line of text
+  for people. Clients branch on the first line:
+
+  | Reason | Meaning |
+  |---|---|
+  | `unsupported-name` | A name the other side cannot create (reserved names such as `CON`, a trailing dot or space, characters Windows does not allow, over 255 UTF-16 code units) |
+  | `duplicate-name` | Two names that differ only in case, or a file also used as a folder |
+  | `nothing-to-copy` | Nothing left to copy once links and junctions are skipped |
+  | `image-not-convertible` | `GET type=image`: the clipboard image cannot be read or converted to PNG; `POST type=image`: the data is not a PNG |
+
+  413, 400 and 500 bodies are plain text.
 - `GET type=files` and `GET type=filelist` fail with 413 when the copy is over the size or item
   limit, 422 when the files cannot be copied as they are, and 500 when no user is signed in or a
-  file cannot be read; the reason is in the body as plain text. 422 covers a name Windows paths do
-  not allow (reserved names such as `CON`, a trailing dot or space, a name over 255 UTF-16 code
-  units), two names that differ only in case (compared with the Unicode uppercase mapping, not only
-  ASCII), and nothing left to copy once links are skipped.
+  file cannot be read. 422 covers a name Windows paths do not allow (`unsupported-name`), two names
+  that differ only in case, compared with the Unicode uppercase mapping and not only ASCII
+  (`duplicate-name`), and nothing left to copy once links are skipped (`nothing-to-copy`).
 - `files=stream` in the `type=info` reply means the host has `type=filelist` and `type=filedata`.
   Clients read the reply lines by key, so older clients ignore it. Hermit then puts host files on the
   local clipboard as virtual files and downloads each file only while it is pasted; older Hermit
@@ -208,7 +227,7 @@ The upstream `/actions/clipboard` endpoint carries text only. On Windows Shell a
   ```
 
   One line per item, folders before their contents, relative paths with `/`. An empty reply means
-  the clipboard holds no files; 413 means the list is over 4 GB or 1,000 items (422 and 500 as
+  the clipboard holds no files; 413 means the list is over 4 GB or 1,000 items (422, 500 and 503 as
   above).
 - Shell keeps the newest two lists per paired device in memory (by device UUID), so a paste that is
   still copying from the previous list keeps working after the client fetches a new one. A list

@@ -16,6 +16,7 @@
 #include <cctype>
 #include <chrono>
 #include <cstring>
+#include <cwchar>
 #include <fstream>
 #include <set>
 #include <system_error>
@@ -279,6 +280,20 @@ namespace platf::clipboard {
     return is_link_tag(reparse_tag(p));
   }
 
+  std::string_view content_error_reason(const std::string &error) {
+    // list_paths and archive_paths (sending), then decode_archive (receiving)
+    if (error.starts_with("unsupported file name") || error == "unsafe path") {
+      return reason_unsupported_name;
+    }
+    if (error.starts_with("duplicate name") || error == "duplicate path" || error == "file used as directory") {
+      return reason_duplicate_name;
+    }
+    if (error == "nothing to copy") {
+      return reason_nothing_to_copy;
+    }
+    return {};
+  }
+
   bool open_with_retry() {
     for (int attempt = 0; attempt < 20; ++attempt) {
       if (OpenClipboard(nullptr)) {
@@ -306,6 +321,70 @@ namespace platf::clipboard {
       return "files";
     }
     return "none";
+  }
+
+  status_e get_text(std::string &text) {
+    text.clear();
+    // IsClipboardFormatAvailable does not need the clipboard to be open.
+    if (!IsClipboardFormatAvailable(CF_UNICODETEXT)) {
+      return status_e::none;
+    }
+    if (!open_with_retry()) {
+      return status_e::busy;
+    }
+    // The format is listed, so a failure from here on is a read error, not an empty clipboard.
+    status_e status = status_e::failed;
+    HANDLE handle = GetClipboardData(CF_UNICODETEXT);
+    if (handle != nullptr) {
+      auto *data = static_cast<const wchar_t *>(GlobalLock(handle));
+      if (data != nullptr) {
+        // Up to the terminating null, but never past the end of the block
+        std::size_t length = wcsnlen(data, GlobalSize(handle) / sizeof(wchar_t));
+        text = narrow(std::wstring(data, length));
+        GlobalUnlock(handle);
+        status = status_e::ok;
+      }
+    }
+    CloseClipboard();
+    return status;
+  }
+
+  status_e set_text(const std::string &text) {
+    // Windows programs expect CR LF line breaks; a line feed already after a CR is kept as is.
+    std::string crlf;
+    crlf.reserve(text.size() + text.size() / 2);
+    for (std::size_t i = 0; i < text.size(); ++i) {
+      if (text[i] == '\n' && (i == 0 || text[i - 1] != '\r')) {
+        crlf += '\r';
+      }
+      crlf += text[i];
+    }
+    // Invalid UTF-8 becomes U+FFFD instead of failing the whole text.
+    std::wstring wide;
+    if (!crlf.empty()) {
+      int n = MultiByteToWideChar(CP_UTF8, 0, crlf.data(), static_cast<int>(crlf.size()), nullptr, 0);
+      if (n <= 0) {
+        return status_e::failed;
+      }
+      wide.assign(static_cast<std::size_t>(n), L'\0');
+      MultiByteToWideChar(CP_UTF8, 0, crlf.data(), static_cast<int>(crlf.size()), wide.data(), n);
+    }
+    HGLOBAL global = make_global(std::string(reinterpret_cast<const char *>(wide.c_str()), (wide.size() + 1) * sizeof(wchar_t)));
+    if (global == nullptr) {
+      return status_e::failed;
+    }
+    if (!open_with_retry()) {
+      GlobalFree(global);
+      return status_e::busy;
+    }
+    // After a successful SetClipboardData the system owns the handle.
+    bool ok = EmptyClipboard() && SetClipboardData(CF_UNICODETEXT, global) != nullptr;
+    CloseClipboard();
+    if (!ok) {
+      GlobalFree(global);
+      return status_e::failed;
+    }
+    return status_e::ok;
   }
 
   std::string dib_to_png(const std::string &dib) {
@@ -442,12 +521,16 @@ namespace platf::clipboard {
     return dib;
   }
 
-  std::string get_image_png(bool &too_large) {
-    too_large = false;
-    if (!open_with_retry()) {
-      return {};
+  status_e get_image_png(std::string &png) {
+    png.clear();
+    // IsClipboardFormatAvailable does not need the clipboard to be open.
+    if (!IsClipboardFormatAvailable(png_format()) && !IsClipboardFormatAvailable(CF_DIB) &&
+        !IsClipboardFormatAvailable(CF_DIBV5) && !IsClipboardFormatAvailable(CF_BITMAP)) {
+      return status_e::none;
     }
-    std::string png;
+    if (!open_with_retry()) {
+      return status_e::busy;
+    }
     std::string dib;
     if (IsClipboardFormatAvailable(png_format())) {
       png = read_global(GetClipboardData(png_format()));
@@ -462,18 +545,27 @@ namespace platf::clipboard {
     if (png.empty() && !dib.empty()) {
       png = dib_to_png(dib);
     }
-    if (png.size() > max_image_bytes) {
-      too_large = true;
-      return {};
+    // An image format is listed, so no data (the program that copied it did not render it) or a
+    // DIB that does not convert is an image that cannot be sent, not an empty clipboard.
+    if (png.empty()) {
+      return status_e::not_convertible;
     }
-    return png;
+    if (png.size() > max_image_bytes) {
+      png.clear();
+      return status_e::too_large;
+    }
+    return status_e::ok;
   }
 
-  bool set_image_png(const std::string &png) {
+  status_e set_image_png(const std::string &png) {
+    std::uint32_t width = 0, height = 0;
+    if (!png_size(png, width, height)) {
+      return status_e::not_convertible;
+    }
     // Decode first so an invalid or oversized image never clears the current clipboard.
     std::string dib = png_to_dibv5(png);
     if (dib.empty()) {
-      return false;
+      return status_e::failed;
     }
     HGLOBAL png_global = make_global(png);
     HGLOBAL dib_global = make_global(dib);
@@ -484,13 +576,13 @@ namespace platf::clipboard {
       if (dib_global) {
         GlobalFree(dib_global);
       }
-      return false;
+      return status_e::failed;
     }
 
     if (!open_with_retry()) {
       GlobalFree(png_global);
       GlobalFree(dib_global);
-      return false;
+      return status_e::busy;
     }
     // After a successful SetClipboardData the system owns that handle; free the rest ourselves.
     bool png_owned = false;
@@ -511,7 +603,7 @@ namespace platf::clipboard {
     if (!dib_owned) {
       GlobalFree(dib_global);
     }
-    return ok;
+    return ok ? status_e::ok : status_e::failed;
   }
 
   bool is_safe_relative_path(const std::string &path) {
@@ -651,10 +743,13 @@ namespace platf::clipboard {
     return true;
   }
 
-  std::vector<std::filesystem::path> get_file_drop_list() {
-    std::vector<std::filesystem::path> paths;
-    if (!IsClipboardFormatAvailable(CF_HDROP) || !open_with_retry()) {
-      return paths;
+  status_e get_file_drop_list(std::vector<std::filesystem::path> &paths) {
+    paths.clear();
+    if (!IsClipboardFormatAvailable(CF_HDROP)) {
+      return status_e::none;
+    }
+    if (!open_with_retry()) {
+      return status_e::busy;
     }
     auto drop = static_cast<HDROP>(GetClipboardData(CF_HDROP));
     if (drop != nullptr) {
@@ -670,7 +765,7 @@ namespace platf::clipboard {
       }
     }
     CloseClipboard();
-    return paths;
+    return paths.empty() ? status_e::none : status_e::ok;
   }
 
   bool list_paths(const std::vector<std::filesystem::path> &roots, std::uint64_t max_total, std::vector<file_list_entry> &entries, std::string &error) {
@@ -935,9 +1030,9 @@ namespace platf::clipboard {
     return true;
   }
 
-  bool set_file_drop_list(const std::vector<std::filesystem::path> &paths) {
+  status_e set_file_drop_list(const std::vector<std::filesystem::path> &paths) {
     if (paths.empty()) {
-      return false;
+      return status_e::failed;
     }
     std::wstring list;
     for (const auto &p : paths) {
@@ -959,14 +1054,15 @@ namespace platf::clipboard {
 
     HGLOBAL drop_global = make_global(drop);
     HGLOBAL effect_global = make_global(effect_bytes);
-    if (drop_global == nullptr || effect_global == nullptr || !open_with_retry()) {
+    const bool allocated = drop_global != nullptr && effect_global != nullptr;
+    if (!allocated || !open_with_retry()) {
       if (drop_global) {
         GlobalFree(drop_global);
       }
       if (effect_global) {
         GlobalFree(effect_global);
       }
-      return false;
+      return allocated ? status_e::busy : status_e::failed;
     }
     bool drop_owned = false;
     bool effect_owned = false;
@@ -986,7 +1082,7 @@ namespace platf::clipboard {
     if (!effect_owned) {
       GlobalFree(effect_global);
     }
-    return ok;
+    return ok ? status_e::ok : status_e::failed;
   }
 
   std::filesystem::path staging_root(HANDLE user_token) {

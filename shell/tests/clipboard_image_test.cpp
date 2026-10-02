@@ -1,6 +1,7 @@
-// Standalone checks for src/platform/windows/clipboard.cpp: DIB <-> PNG conversion and the
-// APCF file archive (encode, decode, validation, extraction, packing a folder tree).
-// Uses synthetic data and a temporary folder only; never touches the real clipboard.
+// Standalone checks for src/platform/windows/clipboard.cpp: DIB <-> PNG conversion, the APCF file
+// archive (encode, decode, validation, extraction, packing a folder tree) and the 422 reasons.
+// Uses synthetic data and a temporary folder only; never touches the real clipboard (set_image_png
+// is only given data it refuses before opening the clipboard).
 //
 // Build and run from the repository root in MSYS2 UCRT64 (one line):
 //   g++ -std=c++20 -O1 -iquote src shell/tests/clipboard_image_test.cpp src/platform/windows/clipboard.cpp -lwindowscodecs -lole32 -luuid -luserenv -lshell32 -o build/clipboard_image_test.exe
@@ -16,6 +17,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace cb = platf::clipboard;
@@ -163,6 +165,9 @@ int main() {
     check("truncated PNG", cb::png_to_dibv5(png.substr(0, png.size() / 2)).empty());
   }
   check("PNG over the size limit", cb::png_to_dibv5(std::string(cb::max_image_bytes + 1, 'x')).empty());
+  // Refused before the clipboard is opened, so the real clipboard is left alone
+  check("writing non-PNG data is not convertible", cb::set_image_png("definitely not a png") == cb::status_e::not_convertible);
+  check("writing nothing is not convertible", cb::set_image_png("") == cb::status_e::not_convertible);
   {
     std::uint32_t width = 0, height = 0;
     std::string png = cb::dib_to_png(make_dib(3, 2, 24, pixels));
@@ -221,24 +226,45 @@ int main() {
     }
     check("round trip keeps kinds, paths and bytes", ok);
   }
-  auto rejects = [](const char *label, const std::vector<cb::archive_entry> &entries) {
+  // reason: the 422 reason the error maps to; empty for errors answered otherwise (400, 413)
+  auto rejects = [](const char *label, const std::vector<cb::archive_entry> &entries, std::string_view reason) {
     std::vector<cb::archive_entry> decoded;
     std::string error;
-    check(label, !cb::decode_archive(cb::encode_archive(entries), decoded, error) && !error.empty());
+    check(label, !cb::decode_archive(cb::encode_archive(entries), decoded, error) && !error.empty() && cb::content_error_reason(error) == reason);
   };
-  rejects("duplicate path (case-insensitive)", {{false, "A.txt", "1"}, {false, "a.TXT", "2"}});
-  rejects("duplicate path (Latin-1 case)", {{false, "Ärger.txt", "1"}, {false, "ärger.txt", "2"}});
-  rejects("duplicate path (Greek case)", {{false, "ΣΟΦΙΑ.txt", "1"}, {false, "σοφια.txt", "2"}});
-  rejects("duplicate folder (Cyrillic case)", {{true, "Папка", ""}, {true, "папка", ""}});
+  rejects("duplicate path (case-insensitive)", {{false, "A.txt", "1"}, {false, "a.TXT", "2"}}, cb::reason_duplicate_name);
+  rejects("duplicate path (Latin-1 case)", {{false, "Ärger.txt", "1"}, {false, "ärger.txt", "2"}}, cb::reason_duplicate_name);
+  rejects("duplicate path (Greek case)", {{false, "ΣΟΦΙΑ.txt", "1"}, {false, "σοφια.txt", "2"}}, cb::reason_duplicate_name);
+  rejects("duplicate folder (Cyrillic case)", {{true, "Папка", ""}, {true, "папка", ""}}, cb::reason_duplicate_name);
   {
     std::vector<cb::archive_entry> decoded;
     std::string error;
     check("different non-ASCII names are not duplicates",
           cb::decode_archive(cb::encode_archive({{false, "한글.txt", "1"}, {false, "Ärger.txt", "2"}, {false, "ärgerlich.txt", "3"}}), decoded, error));
   }
-  rejects("file used as a directory", {{false, "a", "1"}, {false, "a/b", "2"}});
-  rejects("unsafe path inside archive", {{false, "../evil", "x"}});
-  rejects("empty archive", {});
+  rejects("file used as a directory", {{false, "a", "1"}, {false, "a/b", "2"}}, cb::reason_duplicate_name);
+  rejects("unsafe path inside archive", {{false, "../evil", "x"}}, cb::reason_unsupported_name);
+  rejects("empty archive", {}, {});
+  {
+    std::vector<cb::archive_entry> decoded;
+    std::string error;
+    check("empty archive is malformed, not over a limit", !cb::decode_archive(cb::encode_archive({}), decoded, error) && error == "empty archive");
+    std::vector<cb::archive_entry> many(cb::max_file_entries + 1);
+    for (std::size_t i = 0; i < many.size(); ++i) {
+      many[i].path = "f" + std::to_string(i);
+    }
+    check("too many entries is over the limit", !cb::decode_archive(cb::encode_archive(many), decoded, error) && error == "entry count out of range");
+  }
+  std::printf("422 reasons\n");
+  check("unsupported file name", cb::content_error_reason("unsupported file name: a/con") == "unsupported-name");
+  check("duplicate name", cb::content_error_reason("duplicate name: a/B.txt") == "duplicate-name");
+  check("nothing to copy", cb::content_error_reason("nothing to copy") == "nothing-to-copy");
+  check("image reason", cb::reason_image_not_convertible == "image-not-convertible");
+  for (const char *other : {"files too large", "too many files", "archive too large", "entry count out of range", "empty archive",
+                            "malformed entry", "cannot read a.txt", "no user session"}) {
+    std::string label = std::string("no 422 reason for \"") + other + "\"";
+    check(label.c_str(), cb::content_error_reason(other).empty());
+  }
   {
     std::vector<cb::archive_entry> decoded;
     std::string error;
@@ -335,7 +361,8 @@ int main() {
         junction_listed = junction_listed || entry.path.find("junction") != std::string::npos;
       }
       check("listing skips the junction", ok && !junction_listed && listed.size() == 3);  // links, links/real, links/real/a.txt
-      check("listing only a junction copies nothing", !cb::list_paths({junction}, 1 << 20, listed, error) && error == "nothing to copy");
+      check("listing only a junction copies nothing", !cb::list_paths({junction}, 1 << 20, listed, error) && error == "nothing to copy" &&
+                                                        cb::content_error_reason(error) == cb::reason_nothing_to_copy);
       RemoveDirectoryW(junction.c_str());  // removes the junction, not its target
     } else {
       std::printf("  skip junction checks (mklink /J failed)\n");

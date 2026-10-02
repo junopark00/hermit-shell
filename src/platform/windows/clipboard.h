@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <Windows.h>
@@ -17,6 +18,29 @@ namespace platf::clipboard {
 
   /// Largest decoded image size, in pixels, accepted when converting to a DIB.
   constexpr std::uint64_t max_image_pixels = 8192ull * 8192ull;
+
+  /// Outcome of reading or writing the clipboard.
+  enum class status_e {
+    ok,
+    none,  ///< read: nothing of the asked type is on the clipboard
+    busy,  ///< another program kept the clipboard open through every retry of open_with_retry
+    not_convertible,  ///< read: an image that cannot be read or converted to PNG; write: data that is not a PNG
+    too_large,  ///< read: an image whose PNG is over max_image_bytes
+    failed,  ///< anything else
+  };
+
+  // Machine-readable reasons: the first line of the body of a 422 reply, before the text for people.
+  constexpr std::string_view reason_unsupported_name = "unsupported-name";  ///< a name the other side cannot create
+  constexpr std::string_view reason_duplicate_name = "duplicate-name";  ///< two names that differ only in case, or a file also used as a folder
+  constexpr std::string_view reason_nothing_to_copy = "nothing-to-copy";  ///< only links and junctions, or nothing at all
+  constexpr std::string_view reason_image_not_convertible = "image-not-convertible";  ///< an image that cannot be converted
+
+  /**
+   * @brief The 422 reason for an error of list_paths, archive_paths or decode_archive caused by the
+   * copied files themselves.
+   * @return One of the reason_* codes; empty for any other error (limits, I/O, a malformed archive).
+   */
+  std::string_view content_error_reason(const std::string &error);
 
   /**
    * @brief OpenClipboard() with short retries, since another process may hold it briefly.
@@ -34,14 +58,27 @@ namespace platf::clipboard {
   std::string current_type();
 
   /**
-   * @brief Clipboard image as PNG, from the "PNG" format or converted from CF_DIB.
-   * @param too_large Set to true when there is an image, but its PNG is over max_image_bytes.
-   * @return The PNG; empty if there is no image or it is too large.
+   * @brief Clipboard text (CF_UNICODETEXT) as UTF-8.
+   * @return ok (the text may still be empty), none, busy, or failed when the listed text cannot be read.
    */
-  std::string get_image_png(bool &too_large);
+  status_e get_text(std::string &text);
 
-  /// Places a PNG on the clipboard as both "PNG" and CF_DIBV5. Returns false on invalid input or failure.
-  bool set_image_png(const std::string &png);
+  /// Places UTF-8 text on the clipboard as CF_UNICODETEXT, with line feeds turned into CR LF.
+  status_e set_text(const std::string &text);
+
+  /**
+   * @brief Clipboard image as PNG, from the "PNG" format or converted from CF_DIB.
+   * @return ok, none, busy, not_convertible (an image whose data cannot be read or converted) or
+   * too_large (its PNG is over max_image_bytes); png is empty unless ok.
+   */
+  status_e get_image_png(std::string &png);
+
+  /**
+   * @brief Places a PNG on the clipboard as both "PNG" and CF_DIBV5.
+   * @return ok, busy, not_convertible for data that does not start like a PNG, or failed (a PNG that
+   * cannot be decoded, or another failure).
+   */
+  status_e set_image_png(const std::string &png);
 
   /// Converts a packed DIB (BITMAPINFOHEADER-family header, optional masks/palette, pixels) to PNG.
   std::string dib_to_png(const std::string &dib);
@@ -101,8 +138,11 @@ namespace platf::clipboard {
   /// Parses and fully validates an archive (paths, duplicates, limits). Sets error on failure.
   bool decode_archive(const std::string &archive, std::vector<archive_entry> &entries, std::string &error);
 
-  /// Top-level paths currently on the clipboard as CF_HDROP. Empty if none.
-  std::vector<std::filesystem::path> get_file_drop_list();
+  /**
+   * @brief Top-level paths currently on the clipboard as CF_HDROP.
+   * @return ok, none (no CF_HDROP, or no paths in it) or busy.
+   */
+  status_e get_file_drop_list(std::vector<std::filesystem::path> &paths);
 
   /**
    * @brief Packs the given files and folders (recursively) into an archive.
@@ -159,7 +199,7 @@ namespace platf::clipboard {
   bool extract_archive(const std::vector<archive_entry> &entries, const std::filesystem::path &staging_root, std::vector<std::filesystem::path> &top_level, std::string &error);
 
   /// Places the given paths on the clipboard as CF_HDROP with "Preferred DropEffect" = copy.
-  bool set_file_drop_list(const std::vector<std::filesystem::path> &paths);
+  status_e set_file_drop_list(const std::vector<std::filesystem::path> &paths);
 
   /**
    * @brief Folder for received files: <LocalAppData>\Temp\ShellClipboard of the given user,
