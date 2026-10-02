@@ -1560,10 +1560,12 @@ namespace nvhttp {
     if (token == nullptr) {
       return false;
     }
+    auto close_token = util::fail_guard([token]() {
+      CloseHandle(token);  // also when fn throws
+    });
     auto ec = platf::impersonate_current_user(token, [&]() {
       fn(token);
     });
-    CloseHandle(token);
     return !ec;
   }
 
