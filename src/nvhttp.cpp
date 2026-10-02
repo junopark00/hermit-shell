@@ -6,8 +6,12 @@
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 
 // standard includes
+#include <charconv>
+#include <deque>
 #include <filesystem>
 #include <format>
+#include <map>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <string>
@@ -1578,6 +1582,176 @@ namespace nvhttp {
   bool is_file_limit_error(const std::string &error) {
     return error == "files too large" || error == "too many files" || error == "archive too large";
   }
+
+  /// Shell: a file list served with GET /actions/clipboard?type=filelist, whose files are then
+  /// fetched one by one with type=filedata.
+  struct clipboard_snapshot_t {
+    std::string id;
+    std::vector<platf::clipboard::file_list_entry> entries;
+  };
+
+  /// Newest two per client (cert uuid): a paste that is still copying from the previous list keeps
+  /// working after the client fetched a newer one. Older lists are dropped (410 Gone).
+  constexpr std::size_t clipboard_snapshots_per_client = 2;
+  std::mutex clipboard_snapshots_mutex;
+  std::map<std::string, std::deque<std::shared_ptr<const clipboard_snapshot_t>>> clipboard_snapshots;
+
+  void store_clipboard_snapshot(const std::string &client_uuid, std::shared_ptr<const clipboard_snapshot_t> snapshot) {
+    std::lock_guard lock {clipboard_snapshots_mutex};
+    auto &list = clipboard_snapshots[client_uuid];
+    list.push_front(std::move(snapshot));
+    while (list.size() > clipboard_snapshots_per_client) {
+      list.pop_back();
+    }
+  }
+
+  std::shared_ptr<const clipboard_snapshot_t> find_clipboard_snapshot(const std::string &client_uuid, const std::string &id) {
+    std::lock_guard lock {clipboard_snapshots_mutex};
+    auto it = clipboard_snapshots.find(client_uuid);
+    if (id.empty() || it == clipboard_snapshots.end()) {
+      return nullptr;
+    }
+    for (const auto &snapshot : it->second) {
+      if (snapshot->id == id) {
+        return snapshot;
+      }
+    }
+    return nullptr;
+  }
+
+  bool parse_u64(const std::string &text, std::uint64_t &value) {
+    auto end = text.data() + text.size();
+    auto [ptr, ec] = std::from_chars(text.data(), end, value);
+    return !text.empty() && ec == std::errc {} && ptr == end;
+  }
+
+  /// One file being sent for GET type=filedata: read in chunks from the open handle, each chunk
+  /// queued only after the previous one was written to the socket.
+  struct clipboard_file_stream_t {
+    HANDLE file = INVALID_HANDLE_VALUE;
+    std::weak_ptr<SimpleWeb::ServerBase<ShellHTTPS>::Response> response;
+    std::string client;
+    std::uint64_t index = 0;
+    std::uint64_t offset = 0;
+    std::uint64_t length = 0;
+    std::uint64_t sent = 0;
+    std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
+    std::vector<char> buffer;
+
+    ~clipboard_file_stream_t() {
+      if (file != INVALID_HANDLE_VALUE) {
+        CloseHandle(file);
+      }
+    }
+
+    void log_end(const char *outcome) const {
+      auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
+      BOOST_LOG(info) << "Clipboard file " << index << " to [" << client << "] " << outcome << ": " << sent << " of " << length
+                      << " bytes from offset " << offset << " in " << ms << " ms";
+    }
+  };
+
+  // Small enough that a slow client holds back the host through TCP flow control instead of
+  // making it buffer the file, large enough to keep a fast link busy.
+  constexpr std::size_t clipboard_file_chunk_bytes = 256 * 1024;
+
+  void send_clipboard_file_chunk(const std::shared_ptr<clipboard_file_stream_t> &stream) {
+    // The response is kept alive by the write in flight; once it is gone the connection is closed.
+    auto response = stream->response.lock();
+    if (!response) {
+      stream->log_end("stopped");
+      return;
+    }
+    if (stream->sent == stream->length) {
+      stream->log_end("sent");
+      return;  // releasing the response finishes it (and closes the connection)
+    }
+    DWORD want = static_cast<DWORD>(std::min<std::uint64_t>(clipboard_file_chunk_bytes, stream->length - stream->sent));
+    DWORD got = 0;
+    if (!ReadFile(stream->file, stream->buffer.data(), want, &got, nullptr) || got != want) {
+      // The file shrank or became unreadable: the client sees a body shorter than Content-Length.
+      stream->log_end("failed (read error)");
+      return;
+    }
+    response->write(stream->buffer.data(), got);
+    stream->sent += got;
+    response->send([stream](const SimpleWeb::error_code &ec) {
+      if (ec) {
+        stream->log_end("failed (connection closed)");
+        return;
+      }
+      send_clipboard_file_chunk(stream);
+    });
+  }
+
+  /**
+   * @brief Shell: GET type=filedata&snapshot=<id>&index=<n>[&offset=<bytes>]: the bytes of one file from
+   * the client's file list, from offset to the end (offset lets the client resume).
+   * 400 bad arguments, 404 index is not a file, 409 the file is gone or changed since the list was
+   * made, 410 unknown or dropped list, 416 offset past the end, 500 the file cannot be opened.
+   */
+  void send_clipboard_file(resp_https_t response, const crypto::named_cert_t *named_cert_p, const args_t &args) {
+    auto fail = [&](SimpleWeb::StatusCode code, const std::string &why) {
+      BOOST_LOG(info) << "Clipboard file not sent to [" << named_cert_p->name << "]: " << why;
+      response->write(code, why);
+      response->close_connection_after_response = true;
+    };
+    std::uint64_t index = 0;
+    std::uint64_t offset = 0;
+    if (!parse_u64(get_arg(args, "index", ""), index) || !parse_u64(get_arg(args, "offset", "0"), offset)) {
+      fail(SimpleWeb::StatusCode::client_error_bad_request, "bad index or offset");
+      return;
+    }
+    auto snapshot = find_clipboard_snapshot(named_cert_p->uuid, get_arg(args, "snapshot", ""));
+    if (!snapshot) {
+      fail(SimpleWeb::StatusCode::client_error_gone, "unknown file list");
+      return;
+    }
+    if (index >= snapshot->entries.size() || snapshot->entries[index].directory) {
+      fail(SimpleWeb::StatusCode::client_error_not_found, "no such file");
+      return;
+    }
+    const auto &entry = snapshot->entries[index];
+    if (offset > entry.size) {
+      fail(SimpleWeb::StatusCode::client_error_range_not_satisfiable, "offset past the end");
+      return;
+    }
+
+    HANDLE file = INVALID_HANDLE_VALUE;
+    bool changed = false;
+    std::string error;
+    if (!run_as_console_user([&](HANDLE) {
+          file = platf::clipboard::open_listed_file(entry, changed, error);
+        })) {
+      error = "no user session";
+    }
+    if (file == INVALID_HANDLE_VALUE) {
+      fail(changed ? SimpleWeb::StatusCode::client_error_conflict : SimpleWeb::StatusCode::server_error_internal_server_error, error);
+      return;
+    }
+    auto stream = std::make_shared<clipboard_file_stream_t>();
+    stream->file = file;
+    stream->client = named_cert_p->name;
+    stream->index = index;
+    stream->offset = offset;
+    stream->length = entry.size - offset;
+    LARGE_INTEGER position;
+    position.QuadPart = static_cast<LONGLONG>(offset);
+    if (offset > 0 && !SetFilePointerEx(file, position, nullptr, FILE_BEGIN)) {
+      fail(SimpleWeb::StatusCode::server_error_internal_server_error, "cannot seek");
+      return;
+    }
+    stream->buffer.resize(static_cast<std::size_t>(std::min<std::uint64_t>(clipboard_file_chunk_bytes, std::max<std::uint64_t>(stream->length, 1))));
+    stream->response = response;
+
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace("Content-Type", "application/octet-stream");
+    headers.emplace("Content-Length", std::to_string(stream->length));
+    // One file per connection, so an aborted transfer never leaves a half-sent body on a reused one.
+    response->close_connection_after_response = true;
+    response->write(SimpleWeb::StatusCode::success_ok, headers);
+    send_clipboard_file_chunk(stream);
+  }
 #endif
 
   /**
@@ -1747,10 +1921,11 @@ namespace nvhttp {
 
     auto args = request->parse_query_string();
     auto clipboard_type = get_arg(args, "type");
-    // "info", "image" and "files" are Shell extensions; stock clients only use "text".
+    // "info", "image", "files", "filelist" and "filedata" are Shell extensions; stock clients only use "text".
     bool type_supported = clipboard_type == "text"sv;
 #ifdef _WIN32
-    type_supported = type_supported || clipboard_type == "info"sv || clipboard_type == "image"sv || clipboard_type == "files"sv;
+    type_supported = type_supported || clipboard_type == "info"sv || clipboard_type == "image"sv || clipboard_type == "files"sv ||
+                     clipboard_type == "filelist"sv || clipboard_type == "filedata"sv;
 #endif
     if (!type_supported) {
       BOOST_LOG(debug) << "Clipboard type [" << clipboard_type << "] is not supported!";
@@ -1781,7 +1956,9 @@ namespace nvhttp {
       // Sequence number first so a change between the two reads makes the client re-check later.
       auto seq = platf::clipboard::sequence();
       auto type = platf::clipboard::current_type();
-      response->write("seq=" + std::to_string(seq) + "\ntype=" + type + "\n");
+      // "files=stream": type=filelist and type=filedata are available. Clients read the lines they
+      // know by key, so older ones ignore it.
+      response->write("seq=" + std::to_string(seq) + "\ntype=" + type + "\nfiles=stream\n");
       return;
     }
     if (clipboard_type == "image"sv) {
@@ -1791,13 +1968,55 @@ namespace nvhttp {
       response->write(SimpleWeb::StatusCode::success_ok, platf::clipboard::get_image_png(), headers);
       return;
     }
-    if (clipboard_type == "files"sv) {
+    if (clipboard_type == "files"sv || clipboard_type == "filelist"sv || clipboard_type == "filedata"sv) {
       if (!(named_cert_p->perm & PERM::file_dwnload)) {
         BOOST_LOG(debug) << "Permission Download Files denied for [" << named_cert_p->name << "]";
         response->write(SimpleWeb::StatusCode::client_error_unauthorized);
         response->close_connection_after_response = true;
         return;
       }
+    }
+    if (clipboard_type == "filedata"sv) {
+      send_clipboard_file(response, named_cert_p, args);
+      return;
+    }
+    if (clipboard_type == "filelist"sv) {
+      // Sequence number first, as for type=info. Folders are expanded now, files are read only
+      // when the client asks for them (type=filedata).
+      auto seq = platf::clipboard::sequence();
+      auto roots = platf::clipboard::get_file_drop_list();
+      if (roots.empty()) {
+        response->write(SimpleWeb::StatusCode::success_ok, ""sv);  // no files on the clipboard
+        return;
+      }
+      auto snapshot = std::make_shared<clipboard_snapshot_t>();
+      std::string error;
+      bool listed = false;
+      if (!run_as_console_user([&](HANDLE) {
+            listed = platf::clipboard::list_paths(roots, platf::clipboard::max_stream_files_bytes, snapshot->entries, error);
+          })) {
+        error = "no user session";
+      }
+      if (!listed) {
+        BOOST_LOG(info) << "Clipboard file list not sent to [" << named_cert_p->name << "]: " << error;
+        response->write(is_file_limit_error(error) ? SimpleWeb::StatusCode::client_error_payload_too_large : SimpleWeb::StatusCode::server_error_internal_server_error, error);
+        response->close_connection_after_response = true;
+        return;
+      }
+      snapshot->id = crypto::rand_alphabet(16, "0123456789abcdef"sv);
+      std::uint64_t total = 0;
+      for (const auto &entry : snapshot->entries) {
+        total += entry.size;
+      }
+      auto manifest = platf::clipboard::format_file_list(seq, snapshot->id, snapshot->entries);
+      BOOST_LOG(info) << "Clipboard file list sent to [" << named_cert_p->name << "]: " << snapshot->entries.size() << " items, " << total << " bytes";
+      store_clipboard_snapshot(named_cert_p->uuid, std::move(snapshot));
+      SimpleWeb::CaseInsensitiveMultimap headers;
+      headers.emplace("Content-Type", "text/plain; charset=utf-8");
+      response->write(SimpleWeb::StatusCode::success_ok, manifest, headers);
+      return;
+    }
+    if (clipboard_type == "files"sv) {
       auto roots = platf::clipboard::get_file_drop_list();
       if (roots.empty()) {
         response->write(SimpleWeb::StatusCode::success_ok, ""sv);  // no files on the clipboard

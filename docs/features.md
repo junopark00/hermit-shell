@@ -131,15 +131,49 @@ The upstream `/actions/clipboard` endpoint carries text only. On Windows Shell a
 
 | Request | Content | Permission |
 |---|---|---|
-| `GET type=info` | `seq=<change number>`, `type=<text\|image\|files\|none>` | Clipboard read |
+| `GET type=info` | `seq=<change number>`, `type=<text\|image\|files\|none>`, `files=stream` | Clipboard read |
 | `GET`/`POST type=image` | PNG; reads the "PNG" format or converts CF_DIB, writes both "PNG" and CF_DIBV5 | Clipboard read / write |
 | `GET`/`POST type=files` | An "APCF" archive (up to 256 MB and 1,000 files) | Clipboard plus file download / upload |
+| `GET type=filelist` | The copied files and folders as a text list (up to 4 GB and 1,000 items), see below | Clipboard read plus file download |
+| `GET type=filedata&snapshot=<id>&index=<n>[&offset=<bytes>]` | The bytes of one file from that list | Clipboard read plus file download |
 
 - `POST` replies with the new change number (`seq=`), so a client does not read back what it wrote.
 - Received files are checked first (paths, duplicates, size), then extracted with the signed-in user's
   rights to `%LOCALAPPDATA%\Temp\ShellClipboard` and placed on the clipboard as CF_HDROP ("copy").
   Files that are sent are read with the user's rights; links and junctions are not followed.
 - When another program holds the clipboard, Shell retries briefly.
+- `files=stream` in the `type=info` reply means the host has `type=filelist` and `type=filedata`.
+  Clients read the reply lines by key, so older clients ignore it. Hermit then puts host files on the
+  local clipboard as virtual files and downloads each file only while it is pasted; older clients and
+  Hermit for Android keep using `type=files`.
+- `type=filelist` expands folders like `type=files` (same name checks, links and junctions skipped,
+  1,000 items, read with the signed-in user's rights) but reads no file data. The reply is UTF-8 text:
+
+  ```text
+  seq=<change number>
+  snapshot=<16 hex digits>
+  entries=<item count>
+  bytes=<total file bytes>
+  d<TAB>0<TAB><last write, Unix ms><TAB>Folder
+  f<TAB><size><TAB><last write, Unix ms><TAB>Folder/report.pdf
+  ```
+
+  One line per item, folders before their contents, relative paths with `/`. An empty reply means
+  the clipboard holds no files; 413 means the list is over 4 GB or 1,000 items.
+- Shell keeps the newest two lists per paired device in memory (by device UUID), so a paste that is
+  still copying from the previous list keeps working after the client fetches a new one.
+- `type=filedata` takes the item's position in the list (`index`, from 0) and answers with
+  `Content-Length` and the file read from disk in 256 KB chunks, each sent after the previous one
+  left, so a slow client holds the host back through TCP flow control and the file is never held in
+  memory. The file is opened with the user's rights and must still have the listed size and last
+  write time. Errors: 400 bad arguments, 404 the index is not a file of the list, 409 the file is gone
+  or changed, 410 unknown or dropped list, 416 offset past the end, 500 the file cannot be opened. If
+  the file cannot be read to the end, the connection closes early.
+- The HTTPS server ends a response that takes longer than 300 seconds, so long downloads are cut;
+  clients continue with `offset=<bytes received>`. The 4 GB limit for lists only bounds what one copy
+  can bring over (about 18 minutes at 30 Mbps); file data is never buffered.
+- Shell logs each list (device, item count, total bytes) and the end of each file download (device,
+  index, bytes, time), never names or contents.
 - Clients that only know `type=text` are unaffected.
 
 ## Session history

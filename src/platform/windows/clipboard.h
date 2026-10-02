@@ -85,6 +85,47 @@ namespace platf::clipboard {
    */
   bool archive_paths(const std::vector<std::filesystem::path> &roots, std::string &archive, std::string &error);
 
+  // ---- Streamed files -------------------------------------------------------------------
+  //
+  // Newer clients fetch only a list of the copied files (GET type=filelist) and then the bytes of
+  // each file when it is pasted (GET type=filedata), read from disk while they are sent.
+
+  /// Total file data in one streamed file list. Nothing is held in memory, so it can exceed max_files_bytes.
+  constexpr std::uint64_t max_stream_files_bytes = 4ull * 1024 * 1024 * 1024;
+
+  struct file_list_entry {
+    bool directory = false;
+    std::string path;  ///< relative UTF-8 path with '/' separators
+    std::filesystem::path source;  ///< absolute path on this PC
+    std::uint64_t size = 0;  ///< file size (0 for directories)
+    std::uint64_t write_time = 0;  ///< last write time as a FILETIME value (100 ns units since 1601, UTC)
+  };
+
+  /**
+   * @brief Lists the given files and folders (recursively) without reading them, with the same
+   * rules as archive_paths (names, duplicates, links skipped, max_file_entries) and at most
+   * max_total bytes of file data. Folders come before their contents.
+   */
+  bool list_paths(const std::vector<std::filesystem::path> &roots, std::uint64_t max_total, std::vector<file_list_entry> &entries, std::string &error);
+
+  /**
+   * @brief Text manifest of a file list, one "key=value" line per field and then one line per entry:
+   *   seq=<clipboard sequence> | snapshot=<id> | entries=<count> | bytes=<total file bytes>
+   *   <f|d> TAB <size> TAB <last write, Unix ms> TAB <relative UTF-8 path with '/'>
+   */
+  std::string format_file_list(std::uint32_t seq, const std::string &snapshot, const std::vector<file_list_entry> &entries);
+
+  /// Unix time in milliseconds for a FILETIME value; 0 for times before 1970.
+  std::uint64_t filetime_to_unix_ms(std::uint64_t filetime);
+
+  /**
+   * @brief Opens a listed file for reading (links are not followed) and checks that it still has
+   * the listed size and last write time.
+   * @param changed Set to true when the file is gone or differs from the list.
+   * @return The handle, or INVALID_HANDLE_VALUE with error set.
+   */
+  HANDLE open_listed_file(const file_list_entry &entry, bool &changed, std::string &error);
+
   /**
    * @brief Writes archive entries under a new folder in staging_root and returns the top-level items.
    * Older transfer folders in staging_root are removed, keeping the newest few.

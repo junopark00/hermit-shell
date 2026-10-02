@@ -630,16 +630,17 @@ namespace platf::clipboard {
     return paths;
   }
 
-  bool archive_paths(const std::vector<std::filesystem::path> &roots, std::string &archive, std::string &error) {
+  bool list_paths(const std::vector<std::filesystem::path> &roots, std::uint64_t max_total, std::vector<file_list_entry> &entries, std::string &error) {
     namespace fs = std::filesystem;
-    std::vector<archive_entry> entries;
+    entries.clear();
     std::uint64_t total = 0;
     std::set<std::wstring> seen;
 
     auto add = [&](const fs::path &item, const fs::path &base, bool directory) -> bool {
-      archive_entry entry;
+      file_list_entry entry;
       entry.directory = directory;
       entry.path = generic_utf8(item.lexically_relative(base));
+      entry.source = item;
       if (!is_safe_relative_path(entry.path)) {
         error = "unsupported file name: " + entry.path;
         return false;
@@ -652,20 +653,20 @@ namespace platf::clipboard {
         error = "too many files";
         return false;
       }
+      WIN32_FILE_ATTRIBUTE_DATA data {};
+      if (GetFileAttributesExW(item.c_str(), GetFileExInfoStandard, &data)) {
+        entry.write_time = (static_cast<std::uint64_t>(data.ftLastWriteTime.dwHighDateTime) << 32) | data.ftLastWriteTime.dwLowDateTime;
+        if (!directory) {
+          entry.size = (static_cast<std::uint64_t>(data.nFileSizeHigh) << 32) | data.nFileSizeLow;
+        }
+      } else if (!directory) {
+        error = "cannot read size of " + entry.path;
+        return false;
+      }
       if (!directory) {
-        std::error_code ec;
-        auto size = fs::file_size(item, ec);
-        if (ec) {
-          error = "cannot read size of " + entry.path;
-          return false;
-        }
-        total += size;
-        if (total > max_files_bytes) {
+        total += entry.size;
+        if (total > max_total) {
           error = "files too large";
-          return false;
-        }
-        if (!read_file(item, size, entry.data)) {
-          error = "cannot read " + entry.path;
           return false;
         }
       }
@@ -727,8 +728,74 @@ namespace platf::clipboard {
       error = "nothing to copy";
       return false;
     }
+    return true;
+  }
+
+  bool archive_paths(const std::vector<std::filesystem::path> &roots, std::string &archive, std::string &error) {
+    std::vector<file_list_entry> listed;
+    if (!list_paths(roots, max_files_bytes, listed, error)) {
+      return false;
+    }
+    std::vector<archive_entry> entries;
+    entries.reserve(listed.size());
+    for (const auto &item : listed) {
+      archive_entry entry;
+      entry.directory = item.directory;
+      entry.path = item.path;
+      if (!item.directory && !read_file(item.source, item.size, entry.data)) {
+        error = "cannot read " + item.path;
+        return false;
+      }
+      entries.push_back(std::move(entry));
+    }
     archive = encode_archive(entries);
     return true;
+  }
+
+  std::uint64_t filetime_to_unix_ms(std::uint64_t filetime) {
+    constexpr std::uint64_t unix_epoch = 116444736000000000ull;  // 1970-01-01 as a FILETIME
+    return filetime > unix_epoch ? (filetime - unix_epoch) / 10000 : 0;
+  }
+
+  std::string format_file_list(std::uint32_t seq, const std::string &snapshot, const std::vector<file_list_entry> &entries) {
+    std::uint64_t total = 0;
+    for (const auto &entry : entries) {
+      total += entry.size;
+    }
+    std::string out = "seq=" + std::to_string(seq) + "\nsnapshot=" + snapshot + "\nentries=" + std::to_string(entries.size()) + "\nbytes=" + std::to_string(total) + "\n";
+    for (const auto &entry : entries) {
+      // Paths never contain tabs or line breaks (is_safe_relative_path rejects control characters).
+      out += entry.directory ? 'd' : 'f';
+      out += '\t' + std::to_string(entry.size) + '\t' + std::to_string(filetime_to_unix_ms(entry.write_time)) + '\t' + entry.path + '\n';
+    }
+    return out;
+  }
+
+  HANDLE open_listed_file(const file_list_entry &entry, bool &changed, std::string &error) {
+    changed = false;
+    // Sharing like std::ifstream, so files that another program has open can still be copied.
+    HANDLE file = CreateFileW(entry.source.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+      DWORD code = GetLastError();
+      changed = code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND;
+      error = changed ? "file is gone" : "cannot open file (error " + std::to_string(code) + ")";
+      return INVALID_HANDLE_VALUE;
+    }
+    BY_HANDLE_FILE_INFORMATION info {};
+    if (!GetFileInformationByHandle(file, &info)) {
+      error = "cannot read file information (error " + std::to_string(GetLastError()) + ")";
+      CloseHandle(file);
+      return INVALID_HANDLE_VALUE;
+    }
+    const std::uint64_t size = (static_cast<std::uint64_t>(info.nFileSizeHigh) << 32) | info.nFileSizeLow;
+    const std::uint64_t write_time = (static_cast<std::uint64_t>(info.ftLastWriteTime.dwHighDateTime) << 32) | info.ftLastWriteTime.dwLowDateTime;
+    if ((info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) || size != entry.size || write_time != entry.write_time) {
+      changed = true;
+      error = "file changed since it was copied";
+      CloseHandle(file);
+      return INVALID_HANDLE_VALUE;
+    }
+    return file;
   }
 
   bool extract_archive(const std::vector<archive_entry> &entries, const std::filesystem::path &staging_root, std::vector<std::filesystem::path> &top_level, std::string &error) {
