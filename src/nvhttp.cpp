@@ -787,13 +787,13 @@ namespace nvhttp {
 
     pt::ptree tree;
 
-    // Shell: the tray is told last, after the reply and with map_id_sess_mutex released (both are
-    // declared after this): tray_update waits for the tray thread, and a busy one held up every
-    // pairing and the PIN page.
+    // Shell: the tray is told from the task pool once this request is done (the guard is declared
+    // before the reply guard and the lock): tray_update waits for the tray thread, and a busy one
+    // must hold up neither map_id_sess_mutex nor the HTTP io thread that sends the reply.
     std::function<void()> notify_tray;
     auto tray_guard = util::fail_guard([&]() {
       if (notify_tray) {
-        notify_tray();
+        task_pool.push(std::move(notify_tray));
       }
     });
 

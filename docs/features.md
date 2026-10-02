@@ -77,7 +77,8 @@ editor.
   gave up; start pairing again on the device. With several devices waiting, the PIN goes to the one
   that started pairing last.
 - `GET /unpair?uniqueid=<id>` on the HTTP port: clients send it after a pairing failed on their side
-  (a wrong PIN) and from their own Unpair command. Shell drops the unfinished pairing of that
+  (a wrong PIN), when the user cancels pairing (both Hermit clients) and from their own Unpair
+  command. Shell drops the unfinished pairing of that
   uniqueid, answering a request it kept waiting for a PIN, and replies `<root status_code="200"/>`,
   so the client reports the wrong PIN. It never removes a paired device: without an unfinished
   pairing the reply is `status_code` 400 ("Unpair this device in the host's web UI"), so a client's
@@ -88,8 +89,8 @@ editor.
   so a pairing attempt from one such device replaces another such device's unfinished attempt, and
   `/unpair` (unauthenticated, over HTTP) cancels the unfinished attempt of that uniqueid whichever
   device started it. Paired devices are identified by their certificate and are never affected.
-  Hermit for Windows sends a per-install id; Hermit for Android is being changed to send a
-  per-install id for pairing.
+  Hermit for Windows sends a per-install id, and Hermit for Android sends one for pairing (the
+  shared id with NVIDIA GameStream hosts).
 - **Prefill for companion clients**: Hermit and Hermit for Android open
   `https://<host>:47990/pin#pin=1234&name=<URL-encoded device name>`. The fragment never leaves the
   browser; the page fills the fields from it, focuses the **Pair** button and removes the fragment from

@@ -190,7 +190,7 @@ namespace nvhttp {
    * Then using the client certificate public key we should be able to verify that
    * the client secret has been signed by the client
    */
-  void clientpairingsecret(pair_session_t &sess, boost::property_tree::ptree &tree, const std::string &client_pairing_secret);
+  void clientpairingsecret(pair_session_t &sess, boost::property_tree::ptree &tree, const std::string &client_pairing_secret, std::optional<std::string> &paired_name);
 
   /**
    * @brief Shell: what became of a PIN entered in the web UI.
