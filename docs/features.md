@@ -179,8 +179,11 @@ The upstream `/actions/clipboard` endpoint carries text only. On Windows Shell a
   left, so a slow client holds the host back through TCP flow control and the file is never held in
   memory. The file is opened with the user's rights and must still have the listed size and last
   write time. Errors: 400 bad arguments, 404 the index is not a file of the list, 409 the file is gone
-  or changed, 410 unknown, dropped or expired list, 416 offset past the end, 500 the file cannot be opened. If
-  the file cannot be read to the end, the connection closes early.
+  or changed, 410 unknown, dropped or expired list, 416 offset past the end, 500 the file cannot be
+  opened. If the file cannot be read to the end, the connection closes early.
+- Walking folders for `type=filelist`, reading files for `GET type=files` and checking and unpacking
+  `POST type=files` run on a separate worker thread, one at a time, so other requests from any device
+  are not held up meanwhile.
 - The HTTPS server ends a request whose upload or response takes longer than 30 minutes (1,800
   seconds), which leaves a 256 MB `type=files` transfer room down to about 1.2 Mbps. Longer
   `type=filedata` downloads are cut; clients continue with `offset=<bytes received>`. The 4 GB limit

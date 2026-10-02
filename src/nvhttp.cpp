@@ -7,14 +7,15 @@
 
 // standard includes
 #include <charconv>
+#include <condition_variable>
 #include <deque>
 #include <filesystem>
 #include <format>
 #include <map>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
-#include <string>
 
 // lib includes
 #include <boost/asio/ssl/context.hpp>
@@ -1617,6 +1618,108 @@ namespace nvhttp {
     return nullptr;
   }
 
+  /// Reply of a job run on the clipboard worker, written to the response on the io thread.
+  struct file_reply_t {
+    SimpleWeb::StatusCode code = SimpleWeb::StatusCode::success_ok;
+    std::string body;
+    std::string content_type;  ///< no Content-Type header when empty
+  };
+
+  /// Shell: one thread for the slow clipboard file work (walking folders, reading or unpacking up
+  /// to 256 MB), so the single HTTPS io thread keeps serving other requests meanwhile. Jobs run one
+  /// at a time, in order.
+  class clipboard_worker_t {
+  public:
+    void start() {
+      std::lock_guard lock {mutex};
+      stopping = false;
+      thread = std::thread {[this]() {
+        run();
+      }};
+    }
+
+    /// Waits for the running job; queued jobs are dropped without a reply.
+    void stop() {
+      {
+        std::lock_guard lock {mutex};
+        stopping = true;
+      }
+      wake.notify_all();
+      if (thread.joinable()) {
+        thread.join();
+      }
+      std::deque<std::function<void()>> dropped;
+      std::lock_guard lock {mutex};
+      dropped.swap(jobs);
+    }
+
+    void post(std::function<void()> job) {
+      {
+        std::lock_guard lock {mutex};
+        if (stopping) {
+          return;
+        }
+        jobs.push_back(std::move(job));
+      }
+      wake.notify_one();
+    }
+
+  private:
+    void run() {
+      for (;;) {
+        std::function<void()> job;
+        {
+          std::unique_lock lock {mutex};
+          wake.wait(lock, [this]() {
+            return stopping || !jobs.empty();
+          });
+          if (stopping) {
+            return;
+          }
+          job = std::move(jobs.front());
+          jobs.pop_front();
+        }
+        job();
+      }
+    }
+
+    std::mutex mutex;
+    std::condition_variable wake;
+    std::deque<std::function<void()>> jobs;
+    bool stopping = false;
+    std::thread thread;
+  };
+
+  clipboard_worker_t clipboard_worker;
+
+  /**
+   * @brief Runs work on the clipboard worker, then writes its reply on the HTTPS io thread, the
+   * only thread that touches the response. work must not use the response; the jobs keep it alive.
+   */
+  void run_file_job(const std::shared_ptr<SimpleWeb::io_context> &io, resp_https_t response, std::function<file_reply_t()> work) {
+    clipboard_worker.post([io, response = std::move(response), work = std::move(work)]() mutable {
+      auto reply = std::make_shared<file_reply_t>();
+      try {
+        *reply = work();
+      } catch (const std::exception &e) {
+        RevertToSelf();  // the job may have thrown while impersonating the console user
+        BOOST_LOG(error) << "Clipboard file job failed: " << e.what();
+        *reply = file_reply_t {SimpleWeb::StatusCode::server_error_internal_server_error, {}, {}};
+      }
+      work = nullptr;  // free the inputs (up to 256 MB) before the reply is copied into the response
+      boost::asio::post(*io, [response = std::move(response), reply]() {
+        SimpleWeb::CaseInsensitiveMultimap headers;
+        if (!reply->content_type.empty()) {
+          headers.emplace("Content-Type", reply->content_type);
+        }
+        response->write(reply->code, reply->body, headers);
+        if (reply->code != SimpleWeb::StatusCode::success_ok) {
+          response->close_connection_after_response = true;
+        }
+      });
+    });
+  }
+
   bool parse_u64(const std::string &text, std::uint64_t &value) {
     auto end = text.data() + text.size();
     auto [ptr, ec] = std::from_chars(text.data(), end, value);
@@ -1907,7 +2010,8 @@ namespace nvhttp {
 #endif
   }
 
-  void getClipboard(resp_https_t response, req_https_t request) {
+  /// io is the HTTPS server's io context: slow file work replies through it (see run_file_job).
+  void getClipboard(resp_https_t response, req_https_t request, [[maybe_unused]] const std::shared_ptr<SimpleWeb::io_context> &io) {
     print_req<ShellHTTPS>(request);
 
     auto named_cert_p = get_verified_cert(request);
@@ -1993,33 +2097,32 @@ namespace nvhttp {
         response->write(SimpleWeb::StatusCode::success_ok, ""sv);  // no files on the clipboard
         return;
       }
+      // The folder walk runs on the clipboard worker, off the io thread.
       auto snapshot = std::make_shared<clipboard_snapshot_t>();
       snapshot->stream_session = current_stream_session(named_cert_p->uuid);
-      snapshot->console_session = WTSGetActiveConsoleSessionId();
-      std::string error;
-      bool listed = false;
-      if (!run_as_console_user([&](HANDLE) {
-            listed = platf::clipboard::list_paths(roots, platf::clipboard::max_stream_files_bytes, snapshot->entries, error);
-          })) {
-        error = "no user session";
-      }
-      if (!listed) {
-        BOOST_LOG(info) << "Clipboard file list not sent to [" << named_cert_p->name << "]: " << error;
-        response->write(file_error_status(error), error);
-        response->close_connection_after_response = true;
-        return;
-      }
-      snapshot->id = crypto::rand_alphabet(16, "0123456789abcdef"sv);
-      std::uint64_t total = 0;
-      for (const auto &entry : snapshot->entries) {
-        total += entry.size;
-      }
-      auto manifest = platf::clipboard::format_file_list(seq, snapshot->id, snapshot->entries);
-      BOOST_LOG(info) << "Clipboard file list sent to [" << named_cert_p->name << "]: " << snapshot->entries.size() << " items, " << total << " bytes";
-      store_clipboard_snapshot(named_cert_p->uuid, std::move(snapshot));
-      SimpleWeb::CaseInsensitiveMultimap headers;
-      headers.emplace("Content-Type", "text/plain; charset=utf-8");
-      response->write(SimpleWeb::StatusCode::success_ok, manifest, headers);
+      run_file_job(io, response, [roots = std::move(roots), seq, snapshot, client = named_cert_p->name, client_uuid = named_cert_p->uuid]() {
+        snapshot->console_session = WTSGetActiveConsoleSessionId();
+        std::string error;
+        bool listed = false;
+        if (!run_as_console_user([&](HANDLE) {
+              listed = platf::clipboard::list_paths(roots, platf::clipboard::max_stream_files_bytes, snapshot->entries, error);
+            })) {
+          error = "no user session";
+        }
+        if (!listed) {
+          BOOST_LOG(info) << "Clipboard file list not sent to [" << client << "]: " << error;
+          return file_reply_t {file_error_status(error), error, {}};
+        }
+        snapshot->id = crypto::rand_alphabet(16, "0123456789abcdef"sv);
+        std::uint64_t total = 0;
+        for (const auto &entry : snapshot->entries) {
+          total += entry.size;
+        }
+        auto manifest = platf::clipboard::format_file_list(seq, snapshot->id, snapshot->entries);
+        BOOST_LOG(info) << "Clipboard file list sent to [" << client << "]: " << snapshot->entries.size() << " items, " << total << " bytes";
+        store_clipboard_snapshot(client_uuid, snapshot);
+        return file_reply_t {SimpleWeb::StatusCode::success_ok, std::move(manifest), "text/plain; charset=utf-8"};
+      });
       return;
     }
     if (clipboard_type == "files"sv) {
@@ -2028,23 +2131,22 @@ namespace nvhttp {
         response->write(SimpleWeb::StatusCode::success_ok, ""sv);  // no files on the clipboard
         return;
       }
-      std::string archive;
-      std::string error;
-      bool packed = false;
-      if (!run_as_console_user([&](HANDLE) {
-            packed = platf::clipboard::archive_paths(roots, archive, error);
-          })) {
-        error = "no user session";
-      }
-      if (!packed) {
-        BOOST_LOG(info) << "Clipboard files not sent to [" << named_cert_p->name << "]: " << error;
-        response->write(file_error_status(error), error);
-        response->close_connection_after_response = true;
-        return;
-      }
-      SimpleWeb::CaseInsensitiveMultimap headers;
-      headers.emplace("Content-Type", "application/octet-stream");
-      response->write(SimpleWeb::StatusCode::success_ok, archive, headers);
+      // Reading up to 256 MB runs on the clipboard worker, off the io thread.
+      run_file_job(io, response, [roots = std::move(roots), client = named_cert_p->name]() {
+        std::string archive;
+        std::string error;
+        bool packed = false;
+        if (!run_as_console_user([&](HANDLE) {
+              packed = platf::clipboard::archive_paths(roots, archive, error);
+            })) {
+          error = "no user session";
+        }
+        if (!packed) {
+          BOOST_LOG(info) << "Clipboard files not sent to [" << client << "]: " << error;
+          return file_reply_t {file_error_status(error), error, {}};
+        }
+        return file_reply_t {SimpleWeb::StatusCode::success_ok, std::move(archive), "application/octet-stream"};
+      });
       return;
     }
 #endif
@@ -2055,7 +2157,7 @@ namespace nvhttp {
   }
 
   void
-  setClipboard(resp_https_t response, req_https_t request) {
+  setClipboard(resp_https_t response, req_https_t request, [[maybe_unused]] const std::shared_ptr<SimpleWeb::io_context> &io) {
     print_req<ShellHTTPS>(request);
 
     auto named_cert_p = get_verified_cert(request);
@@ -2122,33 +2224,40 @@ namespace nvhttp {
         response->close_connection_after_response = true;
         return;
       }
-      std::vector<platf::clipboard::archive_entry> entries;
-      std::string error;
       if (content.size() > platf::clipboard::max_files_archive_bytes) {
         response->write(SimpleWeb::StatusCode::client_error_payload_too_large);
         response->close_connection_after_response = true;
         return;
       }
-      if (!platf::clipboard::decode_archive(content, entries, error)) {
-        BOOST_LOG(info) << "Clipboard files from [" << named_cert_p->name << "] rejected: " << error;
-        response->write(SimpleWeb::StatusCode::client_error_bad_request, error);
-        response->close_connection_after_response = true;
-        return;
-      }
-      content.clear();
-      content.shrink_to_fit();
+      // Checking and unpacking up to 256 MB runs on the clipboard worker, off the io thread.
+      run_file_job(io, response, [content = std::move(content), client = named_cert_p->name]() mutable {
+        std::vector<platf::clipboard::archive_entry> entries;
+        std::string error;
+        if (!platf::clipboard::decode_archive(content, entries, error)) {
+          BOOST_LOG(info) << "Clipboard files from [" << client << "] rejected: " << error;
+          return file_reply_t {SimpleWeb::StatusCode::client_error_bad_request, error, {}};
+        }
+        content.clear();
+        content.shrink_to_fit();
 
-      std::vector<std::filesystem::path> top_level;
-      bool extracted = false;
-      if (!run_as_console_user([&](HANDLE token) {
-            extracted = platf::clipboard::extract_archive(entries, platf::clipboard::staging_root(token), top_level, error);
-          })) {
-        error = "no user session";
-      }
-      if (!extracted) {
-        BOOST_LOG(warning) << "Clipboard files from [" << named_cert_p->name << "] not saved: " << error;
-      }
-      success = extracted && platf::clipboard::set_file_drop_list(top_level);
+        std::vector<std::filesystem::path> top_level;
+        bool extracted = false;
+        if (!run_as_console_user([&](HANDLE token) {
+              extracted = platf::clipboard::extract_archive(entries, platf::clipboard::staging_root(token), top_level, error);
+            })) {
+          error = "no user session";
+        }
+        if (!extracted) {
+          BOOST_LOG(warning) << "Clipboard files from [" << client << "] not saved: " << error;
+        }
+        if (!extracted || !platf::clipboard::set_file_drop_list(top_level)) {
+          BOOST_LOG(debug) << "Setting clipboard failed!";
+          return file_reply_t {SimpleWeb::StatusCode::server_error_internal_server_error, {}, {}};
+        }
+        // Lets the client recognise its own write and not fetch it back later.
+        return file_reply_t {SimpleWeb::StatusCode::success_ok, "seq=" + std::to_string(platf::clipboard::sequence()) + "\n", {}};
+      });
+      return;
     } else
 #endif
     {
@@ -2270,10 +2379,14 @@ namespace nvhttp {
       resume(host_audio, resp, req);
     };
     https_server.resource["^/cancel$"]["GET"] = cancel;
-    https_server.resource["^/actions/clipboard$"]["GET"] = getClipboard;
+    https_server.resource["^/actions/clipboard$"]["GET"] = [&https_server](auto resp, auto req) {
+      getClipboard(resp, req, https_server.io_service);
+    };
     https_server.resource["^/actions/bitrate$"]["GET"] = setBitrate;
     https_server.resource["^/actions/power$"]["GET"] = power;
-    https_server.resource["^/actions/clipboard$"]["POST"] = setClipboard;
+    https_server.resource["^/actions/clipboard$"]["POST"] = [&https_server](auto resp, auto req) {
+      setClipboard(resp, req, https_server.io_service);
+    };
 
     https_server.config.reuse_address = true;
     https_server.config.address = net::af_to_any_address_string(address_family);
@@ -2305,6 +2418,9 @@ namespace nvhttp {
         return;
       }
     };
+#ifdef _WIN32
+    clipboard_worker.start();
+#endif
     std::thread ssl {accept_and_run, &https_server};
     std::thread tcp {accept_and_run, &http_server};
 
@@ -2318,6 +2434,9 @@ namespace nvhttp {
 
     ssl.join();
     tcp.join();
+#ifdef _WIN32
+    clipboard_worker.stop();
+#endif
   }
 
   void
