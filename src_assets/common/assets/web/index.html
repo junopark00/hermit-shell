@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="auto">
+
+<head>
+  <%- header %>
+  <title>Home · Shell</title>
+</head>
+
+<body id="app" v-cloak>
+  <Navbar></Navbar>
+  <div id="content" class="container">
+    <h1 class="my-4">{{ $t('index.welcome') }}</h1>
+    <div class="alert alert-danger" v-if="fancyLogs.find(x => x.level === 'Fatal')">
+      <div style="line-height: 32px;">
+        <i class="fas fa-circle-exclamation" style="font-size: 32px;margin-right: 0.25em;"></i>
+        <p v-html="$t('index.startup_errors')"></p>
+        <br>
+      </div>
+      <ul>
+        <li v-for="v in fancyLogs.filter(x => x.level === 'Fatal')">{{v.value}}</li>
+      </ul>
+      <a class="btn btn-danger" href="./troubleshooting#logs">{{ $t('shell_ui.view_logs') }}</a>
+    </div>
+    <!-- Shell status (host, version, devices, sessions) -->
+    <Shell-Dashboard></Shell-Dashboard>
+    <!-- Resources -->
+    <div class="my-4">
+      <Client-Card></Client-Card>
+      <Resource-Card></Resource-Card>
+    </div>
+  </div>
+</body>
+
+<script type="module">
+  import { createApp } from 'vue'
+  import { initApp } from './init'
+  import Navbar from './Navbar.vue'
+  import ClientCard from './ClientCard.vue'
+  import ResourceCard from './ResourceCard.vue'
+  import ShellDashboard from './ShellDashboard.vue'
+
+  let app = createApp({
+    components: {
+      Navbar,
+      ClientCard,
+      ResourceCard,
+      ShellDashboard
+    },
+    data() {
+      return {
+        logs: null,
+      }
+    },
+    async created() {
+      // Shell is built from its own repository, so there is no release check; the dashboard shows
+      // the installed version.
+      try {
+        this.logs = (await fetch("./api/logs").then(r => r.text()))
+      } catch (e) {
+        console.error(e);
+      }
+    },
+    computed: {
+      /** Parse the text errors, calculating the text, the timestamp and the level */
+      fancyLogs() {
+        if (!this.logs) return [];
+        let regex = /(\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}]):\s/g;
+        let rawLogLines = (this.logs.split(regex)).splice(1);
+        let logLines = []
+        for (let i = 0; i < rawLogLines.length; i += 2) {
+          logLines.push({ timestamp: rawLogLines[i], level: rawLogLines[i + 1].split(":")[0], value: rawLogLines[i + 1] });
+        }
+        return logLines;
+      }
+    }
+  });
+
+  initApp(app);
+</script>

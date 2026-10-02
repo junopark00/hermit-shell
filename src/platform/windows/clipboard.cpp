@@ -1,0 +1,867 @@
+/**
+ * @file src/platform/windows/clipboard.cpp
+ * @brief Rich clipboard access (sequence number, content type, PNG images) for clipboard sync.
+ */
+#include "clipboard.h"
+
+#include <Windows.h>
+#include <objidl.h>
+#include <shellapi.h>
+#include <ShlObj.h>
+#include <UserEnv.h>
+#include <wincodec.h>
+#include <wrl/client.h>
+
+#include <algorithm>
+#include <cctype>
+#include <chrono>
+#include <cstring>
+#include <cwctype>
+#include <fstream>
+#include <set>
+#include <system_error>
+
+using Microsoft::WRL::ComPtr;
+
+namespace platf::clipboard {
+  namespace {
+    /// Initializes COM for the calling thread for the lifetime of the object when needed.
+    class com_scope {
+    public:
+      com_scope():
+          hr_ {CoInitializeEx(nullptr, COINIT_MULTITHREADED)} {}
+
+      ~com_scope() {
+        // S_OK and S_FALSE both need a matching uninit; RPC_E_CHANGED_MODE means COM was
+        // already initialized as STA on this thread, which WIC also works with.
+        if (SUCCEEDED(hr_)) {
+          CoUninitialize();
+        }
+      }
+
+      com_scope(const com_scope &) = delete;
+      com_scope &operator=(const com_scope &) = delete;
+
+    private:
+      HRESULT hr_;
+    };
+
+    UINT png_format() {
+      static const UINT format = RegisterClipboardFormatW(L"PNG");
+      return format;
+    }
+
+    ComPtr<IWICImagingFactory> wic_factory() {
+      ComPtr<IWICImagingFactory> factory;
+      if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory)))) {
+        return nullptr;
+      }
+      return factory;
+    }
+
+    std::string stream_bytes(IStream *stream) {
+      HGLOBAL global = nullptr;
+      if (FAILED(GetHGlobalFromStream(stream, &global))) {
+        return {};
+      }
+      STATSTG stat {};
+      if (FAILED(stream->Stat(&stat, STATFLAG_NONAME))) {
+        return {};
+      }
+      auto size = static_cast<std::size_t>(stat.cbSize.QuadPart);
+      auto *data = static_cast<const char *>(GlobalLock(global));
+      if (data == nullptr) {
+        return {};
+      }
+      std::string out(data, size);
+      GlobalUnlock(global);
+      return out;
+    }
+
+    std::string encode_png(IWICImagingFactory *factory, IWICBitmapSource *source) {
+      ComPtr<IStream> stream;
+      if (FAILED(CreateStreamOnHGlobal(nullptr, TRUE, &stream))) {
+        return {};
+      }
+      ComPtr<IWICBitmapEncoder> encoder;
+      if (FAILED(factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder)) ||
+          FAILED(encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache))) {
+        return {};
+      }
+      ComPtr<IWICBitmapFrameEncode> frame;
+      if (FAILED(encoder->CreateNewFrame(&frame, nullptr)) || FAILED(frame->Initialize(nullptr))) {
+        return {};
+      }
+      UINT width = 0, height = 0;
+      if (FAILED(source->GetSize(&width, &height)) || FAILED(frame->SetSize(width, height))) {
+        return {};
+      }
+      WICPixelFormatGUID format;
+      if (FAILED(source->GetPixelFormat(&format)) || FAILED(frame->SetPixelFormat(&format))) {
+        return {};
+      }
+      // WriteSource converts to the pixel format the encoder negotiated above if they differ.
+      if (FAILED(frame->WriteSource(source, nullptr)) || FAILED(frame->Commit()) || FAILED(encoder->Commit())) {
+        return {};
+      }
+      return stream_bytes(stream.Get());
+    }
+
+    std::string read_global(HANDLE handle) {
+      if (handle == nullptr) {
+        return {};
+      }
+      auto size = GlobalSize(handle);
+      auto *data = static_cast<const char *>(GlobalLock(handle));
+      if (data == nullptr) {
+        return {};
+      }
+      std::string out(data, size);
+      GlobalUnlock(handle);
+      return out;
+    }
+
+    HGLOBAL make_global(const std::string &bytes) {
+      HGLOBAL global = GlobalAlloc(GMEM_MOVEABLE, bytes.size());
+      if (global == nullptr) {
+        return nullptr;
+      }
+      void *data = GlobalLock(global);
+      if (data == nullptr) {
+        GlobalFree(global);
+        return nullptr;
+      }
+      std::memcpy(data, bytes.data(), bytes.size());
+      GlobalUnlock(global);
+      return global;
+    }
+
+    // Local UTF-8 helpers so this file does not depend on the rest of Shell.
+    std::wstring widen(const std::string &utf8) {
+      if (utf8.empty()) {
+        return {};
+      }
+      int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
+      if (n <= 0) {
+        return {};
+      }
+      std::wstring out(static_cast<std::size_t>(n), L'\0');
+      MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8.data(), static_cast<int>(utf8.size()), out.data(), n);
+      return out;
+    }
+
+    std::string narrow(const std::wstring &wide) {
+      if (wide.empty()) {
+        return {};
+      }
+      int n = WideCharToMultiByte(CP_UTF8, 0, wide.data(), static_cast<int>(wide.size()), nullptr, 0, nullptr, nullptr);
+      if (n <= 0) {
+        return {};
+      }
+      std::string out(static_cast<std::size_t>(n), '\0');
+      WideCharToMultiByte(CP_UTF8, 0, wide.data(), static_cast<int>(wide.size()), out.data(), n, nullptr, nullptr);
+      return out;
+    }
+
+    /// Case-insensitive key for duplicate detection (Windows paths ignore case).
+    std::wstring fold(const std::string &utf8) {
+      std::wstring w = widen(utf8);
+      for (auto &c : w) {
+        c = static_cast<wchar_t>(std::towlower(c));
+      }
+      return w;
+    }
+
+    void put_u32(std::string &out, std::uint32_t v) {
+      for (int i = 0; i < 4; ++i) {
+        out.push_back(static_cast<char>((v >> (8 * i)) & 0xFF));
+      }
+    }
+
+    void put_u64(std::string &out, std::uint64_t v) {
+      for (int i = 0; i < 8; ++i) {
+        out.push_back(static_cast<char>((v >> (8 * i)) & 0xFF));
+      }
+    }
+
+    class byte_reader {
+    public:
+      explicit byte_reader(const std::string &data):
+          data_ {data} {}
+
+      bool u8(std::uint8_t &v) {
+        if (remaining() < 1) {
+          return false;
+        }
+        v = static_cast<std::uint8_t>(data_[pos_++]);
+        return true;
+      }
+
+      bool u32(std::uint32_t &v) {
+        if (remaining() < 4) {
+          return false;
+        }
+        v = 0;
+        for (int i = 0; i < 4; ++i) {
+          v |= static_cast<std::uint32_t>(static_cast<std::uint8_t>(data_[pos_++])) << (8 * i);
+        }
+        return true;
+      }
+
+      bool u64(std::uint64_t &v) {
+        if (remaining() < 8) {
+          return false;
+        }
+        v = 0;
+        for (int i = 0; i < 8; ++i) {
+          v |= static_cast<std::uint64_t>(static_cast<std::uint8_t>(data_[pos_++])) << (8 * i);
+        }
+        return true;
+      }
+
+      bool bytes(std::uint64_t n, std::string &out) {
+        if (remaining() < n) {
+          return false;
+        }
+        out.assign(data_, pos_, static_cast<std::size_t>(n));
+        pos_ += static_cast<std::size_t>(n);
+        return true;
+      }
+
+      std::size_t remaining() const {
+        return data_.size() - pos_;
+      }
+
+    private:
+      const std::string &data_;
+      std::size_t pos_ = 0;
+    };
+
+    std::string generic_utf8(const std::filesystem::path &p) {
+      return narrow(p.generic_wstring());
+    }
+
+    bool is_reparse_point(const std::filesystem::path &p) {
+      DWORD attributes = GetFileAttributesW(p.c_str());
+      return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT);
+    }
+
+    bool read_file(const std::filesystem::path &p, std::uint64_t expected, std::string &out) {
+      std::ifstream in(p, std::ios::binary);
+      if (!in) {
+        return false;
+      }
+      out.assign(static_cast<std::size_t>(expected), '\0');
+      if (expected > 0 && !in.read(out.data(), static_cast<std::streamsize>(expected))) {
+        return false;
+      }
+      // The file must not have grown while we read it; a changed file would be truncated.
+      return in.peek() == std::char_traits<char>::eof();
+    }
+  }  // namespace
+
+  bool open_with_retry() {
+    for (int attempt = 0; attempt < 20; ++attempt) {
+      if (OpenClipboard(nullptr)) {
+        return true;
+      }
+      Sleep(15);
+    }
+    return false;
+  }
+
+  std::uint32_t sequence() {
+    return GetClipboardSequenceNumber();
+  }
+
+  std::string current_type() {
+    // IsClipboardFormatAvailable does not need the clipboard to be open.
+    if (IsClipboardFormatAvailable(CF_UNICODETEXT)) {
+      return "text";
+    }
+    if (IsClipboardFormatAvailable(png_format()) || IsClipboardFormatAvailable(CF_DIB) ||
+        IsClipboardFormatAvailable(CF_DIBV5) || IsClipboardFormatAvailable(CF_BITMAP)) {
+      return "image";
+    }
+    if (IsClipboardFormatAvailable(CF_HDROP)) {
+      return "files";
+    }
+    return "none";
+  }
+
+  std::string dib_to_png(const std::string &dib) {
+    if (dib.size() < sizeof(BITMAPINFOHEADER)) {
+      return {};
+    }
+    BITMAPINFOHEADER header;
+    std::memcpy(&header, dib.data(), sizeof(header));
+    if (header.biSize < sizeof(BITMAPINFOHEADER) || header.biSize > dib.size()) {
+      return {};
+    }
+
+    // Offset of the pixel array inside the packed DIB: header, then masks (only for a plain
+    // BITMAPINFOHEADER; V4/V5 headers embed them), then the color table.
+    std::size_t offset = header.biSize;
+    if (header.biSize == sizeof(BITMAPINFOHEADER) && (header.biCompression == BI_BITFIELDS || header.biCompression == 6 /* BI_ALPHABITFIELDS */)) {
+      offset += (header.biCompression == BI_BITFIELDS ? 3 : 4) * sizeof(DWORD);
+    }
+    std::size_t colors = header.biClrUsed;
+    if (colors == 0 && header.biBitCount <= 8) {
+      colors = std::size_t {1} << header.biBitCount;
+    }
+    offset += colors * sizeof(RGBQUAD);
+    if (offset >= dib.size()) {
+      return {};
+    }
+
+    // WIC decodes BMP files, so prepend a BITMAPFILEHEADER.
+    BITMAPFILEHEADER file {};
+    file.bfType = 0x4D42;  // "BM"
+    file.bfSize = static_cast<DWORD>(sizeof(file) + dib.size());
+    file.bfOffBits = static_cast<DWORD>(sizeof(file) + offset);
+    std::string bmp(reinterpret_cast<const char *>(&file), sizeof(file));
+    bmp += dib;
+
+    com_scope com;
+    auto factory = wic_factory();
+    if (!factory) {
+      return {};
+    }
+    ComPtr<IWICStream> stream;
+    if (FAILED(factory->CreateStream(&stream)) ||
+        FAILED(stream->InitializeFromMemory(reinterpret_cast<BYTE *>(bmp.data()), static_cast<DWORD>(bmp.size())))) {
+      return {};
+    }
+    ComPtr<IWICBitmapDecoder> decoder;
+    if (FAILED(factory->CreateDecoderFromStream(stream.Get(), &GUID_ContainerFormatBmp, WICDecodeMetadataCacheOnDemand, &decoder))) {
+      return {};
+    }
+    ComPtr<IWICBitmapFrameDecode> frame;
+    if (FAILED(decoder->GetFrame(0, &frame))) {
+      return {};
+    }
+    return encode_png(factory.Get(), frame.Get());
+  }
+
+  std::string png_to_dibv5(const std::string &png) {
+    if (png.empty() || png.size() > max_image_bytes) {
+      return {};
+    }
+    com_scope com;
+    auto factory = wic_factory();
+    if (!factory) {
+      return {};
+    }
+    std::string copy = png;  // InitializeFromMemory needs a mutable buffer
+    ComPtr<IWICStream> stream;
+    if (FAILED(factory->CreateStream(&stream)) ||
+        FAILED(stream->InitializeFromMemory(reinterpret_cast<BYTE *>(copy.data()), static_cast<DWORD>(copy.size())))) {
+      return {};
+    }
+    ComPtr<IWICBitmapDecoder> decoder;
+    if (FAILED(factory->CreateDecoderFromStream(stream.Get(), &GUID_ContainerFormatPng, WICDecodeMetadataCacheOnDemand, &decoder))) {
+      return {};
+    }
+    ComPtr<IWICBitmapFrameDecode> frame;
+    if (FAILED(decoder->GetFrame(0, &frame))) {
+      return {};
+    }
+    UINT width = 0, height = 0;
+    if (FAILED(frame->GetSize(&width, &height)) || width == 0 || height == 0 ||
+        static_cast<std::uint64_t>(width) * height > max_image_pixels) {
+      return {};
+    }
+    ComPtr<IWICFormatConverter> converter;
+    if (FAILED(factory->CreateFormatConverter(&converter)) ||
+        FAILED(converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) {
+      return {};
+    }
+
+    const std::size_t stride = static_cast<std::size_t>(width) * 4;
+    std::string pixels(stride * height, '\0');
+    if (FAILED(converter->CopyPixels(nullptr, static_cast<UINT>(stride), static_cast<UINT>(pixels.size()), reinterpret_cast<BYTE *>(pixels.data())))) {
+      return {};
+    }
+
+    BITMAPV5HEADER header {};
+    header.bV5Size = sizeof(header);
+    header.bV5Width = static_cast<LONG>(width);
+    header.bV5Height = static_cast<LONG>(height);  // bottom-up: the most widely supported layout
+    header.bV5Planes = 1;
+    header.bV5BitCount = 32;
+    header.bV5Compression = BI_BITFIELDS;
+    header.bV5SizeImage = static_cast<DWORD>(pixels.size());
+    header.bV5RedMask = 0x00FF0000;
+    header.bV5GreenMask = 0x0000FF00;
+    header.bV5BlueMask = 0x000000FF;
+    header.bV5AlphaMask = 0xFF000000;
+    header.bV5CSType = 0x73524742;  // LCS_sRGB ('sRGB'); the header macro is a multi-char literal
+    header.bV5Intent = LCS_GM_IMAGES;
+
+    std::string dib(reinterpret_cast<const char *>(&header), sizeof(header));
+    dib.reserve(sizeof(header) + pixels.size());
+    for (UINT row = height; row-- > 0;) {
+      dib.append(pixels.data() + row * stride, stride);
+    }
+    return dib;
+  }
+
+  std::string get_image_png() {
+    if (!open_with_retry()) {
+      return {};
+    }
+    std::string png;
+    std::string dib;
+    if (IsClipboardFormatAvailable(png_format())) {
+      png = read_global(GetClipboardData(png_format()));
+    }
+    if (png.empty()) {
+      // Prefer CF_DIB over CF_DIBV5: many apps write an unreliable alpha channel in V5 data,
+      // which would turn the image transparent. Windows synthesizes CF_DIB when needed.
+      dib = read_global(GetClipboardData(CF_DIB));
+    }
+    CloseClipboard();
+
+    if (png.empty() && !dib.empty()) {
+      png = dib_to_png(dib);
+    }
+    if (png.size() > max_image_bytes) {
+      return {};
+    }
+    return png;
+  }
+
+  bool set_image_png(const std::string &png) {
+    // Decode first so an invalid or oversized image never clears the current clipboard.
+    std::string dib = png_to_dibv5(png);
+    if (dib.empty()) {
+      return false;
+    }
+    HGLOBAL png_global = make_global(png);
+    HGLOBAL dib_global = make_global(dib);
+    if (png_global == nullptr || dib_global == nullptr) {
+      if (png_global) {
+        GlobalFree(png_global);
+      }
+      if (dib_global) {
+        GlobalFree(dib_global);
+      }
+      return false;
+    }
+
+    if (!open_with_retry()) {
+      GlobalFree(png_global);
+      GlobalFree(dib_global);
+      return false;
+    }
+    // After a successful SetClipboardData the system owns that handle; free the rest ourselves.
+    bool png_owned = false;
+    bool dib_owned = false;
+    bool ok = EmptyClipboard() != 0;
+    if (ok) {
+      png_owned = SetClipboardData(png_format(), png_global) != nullptr;
+      ok = png_owned;
+    }
+    if (ok) {
+      dib_owned = SetClipboardData(CF_DIBV5, dib_global) != nullptr;
+      ok = dib_owned;
+    }
+    CloseClipboard();
+    if (!png_owned) {
+      GlobalFree(png_global);
+    }
+    if (!dib_owned) {
+      GlobalFree(dib_global);
+    }
+    return ok;
+  }
+
+  bool is_safe_relative_path(const std::string &path) {
+    if (path.empty() || path.size() > 1024) {
+      return false;
+    }
+    if (widen(path).empty()) {
+      return false;  // not valid UTF-8
+    }
+    static const char *reserved[] = {"CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"};
+
+    std::size_t start = 0;
+    while (start <= path.size()) {
+      std::size_t end = path.find('/', start);
+      if (end == std::string::npos) {
+        end = path.size();
+      }
+      std::string part = path.substr(start, end - start);
+      if (part.empty() || part == "." || part == ".." || part.size() > 255) {
+        return false;
+      }
+      for (unsigned char c : part) {
+        if (c < 0x20 || c == '\\' || c == ':' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|') {
+          return false;
+        }
+      }
+      if (part.back() == '.' || part.back() == ' ') {
+        return false;  // Windows silently strips these, which could alias another entry
+      }
+      std::string base = part.substr(0, part.find('.'));
+      std::transform(base.begin(), base.end(), base.begin(), [](unsigned char c) {
+        return static_cast<char>(std::toupper(c));
+      });
+      for (const char *name : reserved) {
+        if (base == name) {
+          return false;
+        }
+      }
+      if (end == path.size()) {
+        break;
+      }
+      start = end + 1;
+    }
+    return true;
+  }
+
+  std::string encode_archive(const std::vector<archive_entry> &entries) {
+    std::string out = "APCF";
+    put_u32(out, 1);
+    put_u32(out, static_cast<std::uint32_t>(entries.size()));
+    for (const auto &entry : entries) {
+      out.push_back(entry.directory ? 1 : 0);
+      put_u32(out, static_cast<std::uint32_t>(entry.path.size()));
+      out += entry.path;
+      put_u64(out, entry.directory ? 0 : entry.data.size());
+      if (!entry.directory) {
+        out += entry.data;
+      }
+    }
+    return out;
+  }
+
+  bool decode_archive(const std::string &archive, std::vector<archive_entry> &entries, std::string &error) {
+    entries.clear();
+    if (archive.size() > max_files_archive_bytes) {
+      error = "archive too large";
+      return false;
+    }
+    byte_reader in {archive};
+    std::string magic;
+    std::uint32_t version = 0, count = 0;
+    if (!in.bytes(4, magic) || magic != "APCF" || !in.u32(version) || version != 1 || !in.u32(count)) {
+      error = "not an APCF v1 archive";
+      return false;
+    }
+    if (count == 0 || count > max_file_entries) {
+      error = "entry count out of range";
+      return false;
+    }
+
+    std::set<std::wstring> seen;
+    std::set<std::wstring> files;
+    std::uint64_t total = 0;
+    entries.reserve(count);
+    for (std::uint32_t i = 0; i < count; ++i) {
+      archive_entry entry;
+      std::uint8_t kind = 0;
+      std::uint32_t path_length = 0;
+      std::uint64_t size = 0;
+      if (!in.u8(kind) || kind > 1 || !in.u32(path_length) || path_length > 1024 || !in.bytes(path_length, entry.path) || !in.u64(size)) {
+        error = "malformed entry";
+        return false;
+      }
+      entry.directory = kind == 1;
+      if (!is_safe_relative_path(entry.path)) {
+        error = "unsafe path";
+        return false;
+      }
+      if (entry.directory && size != 0) {
+        error = "directory with data";
+        return false;
+      }
+      total += size;
+      if (total > max_files_bytes || !in.bytes(size, entry.data)) {
+        error = total > max_files_bytes ? "files too large" : "truncated data";
+        return false;
+      }
+      auto key = fold(entry.path);
+      if (!seen.insert(key).second) {
+        error = "duplicate path";
+        return false;
+      }
+      if (!entry.directory) {
+        files.insert(key);
+      }
+      entries.push_back(std::move(entry));
+    }
+    if (in.remaining() != 0) {
+      error = "trailing data";
+      return false;
+    }
+    // A file must not also be used as a parent directory of another entry.
+    for (const auto &entry : entries) {
+      auto key = fold(entry.path);
+      for (std::size_t slash = key.find(L'/'); slash != std::wstring::npos; slash = key.find(L'/', slash + 1)) {
+        if (files.count(key.substr(0, slash))) {
+          error = "file used as directory";
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  std::vector<std::filesystem::path> get_file_drop_list() {
+    std::vector<std::filesystem::path> paths;
+    if (!IsClipboardFormatAvailable(CF_HDROP) || !open_with_retry()) {
+      return paths;
+    }
+    auto drop = static_cast<HDROP>(GetClipboardData(CF_HDROP));
+    if (drop != nullptr) {
+      UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+      for (UINT i = 0; i < count; ++i) {
+        UINT length = DragQueryFileW(drop, i, nullptr, 0);
+        std::wstring path(length + 1, L'\0');
+        DragQueryFileW(drop, i, path.data(), length + 1);
+        path.resize(length);
+        if (!path.empty()) {
+          paths.emplace_back(path);
+        }
+      }
+    }
+    CloseClipboard();
+    return paths;
+  }
+
+  bool archive_paths(const std::vector<std::filesystem::path> &roots, std::string &archive, std::string &error) {
+    namespace fs = std::filesystem;
+    std::vector<archive_entry> entries;
+    std::uint64_t total = 0;
+    std::set<std::wstring> seen;
+
+    auto add = [&](const fs::path &item, const fs::path &base, bool directory) -> bool {
+      archive_entry entry;
+      entry.directory = directory;
+      entry.path = generic_utf8(item.lexically_relative(base));
+      if (!is_safe_relative_path(entry.path)) {
+        error = "unsupported file name: " + entry.path;
+        return false;
+      }
+      if (!seen.insert(fold(entry.path)).second) {
+        error = "duplicate name: " + entry.path;
+        return false;
+      }
+      if (entries.size() >= max_file_entries) {
+        error = "too many files";
+        return false;
+      }
+      if (!directory) {
+        std::error_code ec;
+        auto size = fs::file_size(item, ec);
+        if (ec) {
+          error = "cannot read size of " + entry.path;
+          return false;
+        }
+        total += size;
+        if (total > max_files_bytes) {
+          error = "files too large";
+          return false;
+        }
+        if (!read_file(item, size, entry.data)) {
+          error = "cannot read " + entry.path;
+          return false;
+        }
+      }
+      entries.push_back(std::move(entry));
+      return true;
+    };
+
+    for (const auto &root : roots) {
+      std::error_code ec;
+      if (is_reparse_point(root)) {
+        continue;
+      }
+      auto status = fs::status(root, ec);
+      if (ec || !root.has_filename()) {
+        error = "cannot copy " + generic_utf8(root);
+        return false;
+      }
+      fs::path base = root.parent_path();
+      if (fs::is_regular_file(status)) {
+        if (!add(root, base, false)) {
+          return false;
+        }
+      } else if (fs::is_directory(status)) {
+        if (!add(root, base, true)) {
+          return false;
+        }
+        fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec);
+        if (ec) {
+          error = "cannot list " + generic_utf8(root);
+          return false;
+        }
+        for (; it != fs::recursive_directory_iterator(); it.increment(ec)) {
+          if (ec) {
+            error = "cannot list " + generic_utf8(root);
+            return false;
+          }
+          const auto &path = it->path();
+          if (is_reparse_point(path)) {
+            it.disable_recursion_pending();  // never follow links or junctions
+            continue;
+          }
+          auto item_status = it->status(ec);
+          if (ec) {
+            continue;
+          }
+          if (fs::is_directory(item_status)) {
+            if (!add(path, base, true)) {
+              return false;
+            }
+          } else if (fs::is_regular_file(item_status)) {
+            if (!add(path, base, false)) {
+              return false;
+            }
+          }
+        }
+      }
+    }
+    if (entries.empty()) {
+      error = "nothing to copy";
+      return false;
+    }
+    archive = encode_archive(entries);
+    return true;
+  }
+
+  bool extract_archive(const std::vector<archive_entry> &entries, const std::filesystem::path &staging_root, std::vector<std::filesystem::path> &top_level, std::string &error) {
+    namespace fs = std::filesystem;
+    top_level.clear();
+    std::error_code ec;
+    fs::create_directories(staging_root, ec);
+    if (ec) {
+      error = "cannot create staging folder";
+      return false;
+    }
+
+    // Keep only the newest few earlier transfers; the clipboard no longer points at older ones.
+    std::vector<fs::path> previous;
+    for (fs::directory_iterator it(staging_root, ec), end; !ec && it != end; it.increment(ec)) {
+      if (it->is_directory(ec) && it->path().filename().wstring().rfind(L"xfer-", 0) == 0) {
+        previous.push_back(it->path());
+      }
+    }
+    std::sort(previous.begin(), previous.end());
+    while (previous.size() > 4) {
+      fs::remove_all(previous.front(), ec);
+      previous.erase(previous.begin());
+    }
+
+    auto now = std::chrono::system_clock::now().time_since_epoch();
+    auto stamp = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+    fs::path folder = staging_root / (L"xfer-" + std::to_wstring(stamp));
+    if (!fs::create_directory(folder, ec) || ec) {
+      error = "cannot create transfer folder";
+      return false;
+    }
+
+    auto fail = [&](const std::string &message) {
+      error = message;
+      fs::remove_all(folder, ec);
+      top_level.clear();
+      return false;
+    };
+
+    std::set<std::wstring> tops;
+    for (const auto &entry : entries) {
+      fs::path relative {widen(entry.path)};
+      fs::path target = folder / relative;
+      if (entry.directory) {
+        fs::create_directories(target, ec);
+        if (ec) {
+          return fail("cannot create folder " + entry.path);
+        }
+      } else {
+        fs::create_directories(target.parent_path(), ec);
+        if (ec) {
+          return fail("cannot create folder for " + entry.path);
+        }
+        std::ofstream out(target, std::ios::binary | std::ios::trunc);
+        if (!out || !out.write(entry.data.data(), static_cast<std::streamsize>(entry.data.size())) || !out.flush()) {
+          return fail("cannot write " + entry.path);
+        }
+      }
+      std::wstring top = relative.begin()->wstring();
+      if (tops.insert(fold(narrow(top))).second) {
+        top_level.push_back(folder / top);
+      }
+    }
+    return true;
+  }
+
+  bool set_file_drop_list(const std::vector<std::filesystem::path> &paths) {
+    if (paths.empty()) {
+      return false;
+    }
+    std::wstring list;
+    for (const auto &p : paths) {
+      list += p.wstring();
+      list.push_back(L'\0');
+    }
+    list.push_back(L'\0');
+
+    std::string drop(sizeof(DROPFILES), '\0');
+    DROPFILES header {};
+    header.pFiles = sizeof(DROPFILES);
+    header.fWide = TRUE;
+    std::memcpy(drop.data(), &header, sizeof(header));
+    drop.append(reinterpret_cast<const char *>(list.data()), list.size() * sizeof(wchar_t));
+
+    DWORD effect = 1;  // DROPEFFECT_COPY: paste copies instead of moving out of the staging folder
+    std::string effect_bytes(reinterpret_cast<const char *>(&effect), sizeof(effect));
+    static const UINT effect_format = RegisterClipboardFormatW(L"Preferred DropEffect");
+
+    HGLOBAL drop_global = make_global(drop);
+    HGLOBAL effect_global = make_global(effect_bytes);
+    if (drop_global == nullptr || effect_global == nullptr || !open_with_retry()) {
+      if (drop_global) {
+        GlobalFree(drop_global);
+      }
+      if (effect_global) {
+        GlobalFree(effect_global);
+      }
+      return false;
+    }
+    bool drop_owned = false;
+    bool effect_owned = false;
+    bool ok = EmptyClipboard() != 0;
+    if (ok) {
+      drop_owned = SetClipboardData(CF_HDROP, drop_global) != nullptr;
+      ok = drop_owned;
+    }
+    if (ok) {
+      effect_owned = SetClipboardData(effect_format, effect_global) != nullptr;
+      ok = effect_owned;
+    }
+    CloseClipboard();
+    if (!drop_owned) {
+      GlobalFree(drop_global);
+    }
+    if (!effect_owned) {
+      GlobalFree(effect_global);
+    }
+    return ok;
+  }
+
+  std::filesystem::path staging_root(HANDLE user_token) {
+    if (user_token != nullptr) {
+      DWORD size = 0;
+      GetUserProfileDirectoryW(user_token, nullptr, &size);
+      std::wstring profile(size, L'\0');
+      if (size > 0 && GetUserProfileDirectoryW(user_token, profile.data(), &size)) {
+        profile.resize(wcslen(profile.c_str()));
+        return std::filesystem::path(profile) / L"AppData" / L"Local" / L"Temp" / L"ShellClipboard";
+      }
+    }
+    wchar_t temp[MAX_PATH + 1] {};
+    DWORD length = GetTempPathW(MAX_PATH + 1, temp);
+    return std::filesystem::path(std::wstring(temp, length)) / L"ShellClipboard";
+  }
+}  // namespace platf::clipboard

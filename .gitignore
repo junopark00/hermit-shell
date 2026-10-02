@@ -1,0 +1,67 @@
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# JetBrains IDE
+.idea/
+
+# VSCode IDE
+.vscode/
+
+# build directories
+build/
+cmake-*/
+docs/doxyconfig*
+
+# npm
+node_modules/
+package-lock.json
+
+# Translations
+*.mo
+*.pot
+
+# Dummy macOS files
+.DS_Store
+
+# Python
+*.pyc
+venv/
+
+# Local host data and configuration backups (never committed)
+/personal-local/
+/local/
+*.apbackup
+
+# Prebuilt third-party driver files shipped with Shell (see the README.txt next to them)
+!/src_assets/windows/drivers/sudovda/SudoVDA.dll
+!/src_assets/windows/drivers/sudovda/nefconc.exe

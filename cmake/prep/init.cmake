@@ -1,0 +1,22 @@
+if (WIN32)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+        if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 15.0)
+            add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-Wno-template-body>) # Workaround for WinRT headers
+        endif()
+    endif()
+elseif (APPLE)
+elseif (UNIX)
+    include(GNUInstallDirs)
+
+    if(NOT DEFINED SHELL_EXECUTABLE_PATH)
+        set(SHELL_EXECUTABLE_PATH "shell")
+    endif()
+
+    if(SHELL_BUILD_FLATPAK)
+        set(SHELL_SERVICE_START_COMMAND "ExecStart=flatpak run --command=shell ${PROJECT_FQDN}")
+        set(SHELL_SERVICE_STOP_COMMAND "ExecStop=flatpak kill ${PROJECT_FQDN}")
+    else()
+        set(SHELL_SERVICE_START_COMMAND "ExecStart=${SHELL_EXECUTABLE_PATH}")
+        set(SHELL_SERVICE_STOP_COMMAND "")
+    endif()
+endif()

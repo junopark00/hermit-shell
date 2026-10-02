@@ -1,0 +1,158 @@
+Shell
+Copyright (C) 2026 Juno Park
+https://github.com/junopark00/hermit-shell
+
+Shell is free software: you can redistribute it and/or modify it under the terms of the GNU General
+Public License version 3 as published by the Free Software Foundation (see LICENSE). It is distributed
+WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+PURPOSE.
+
+
+Origin and modifications
+========================
+
+Shell is a modified version of Sunshine and Apollo:
+
+  Sunshine - Copyright (C) LizardByte and contributors
+    https://github.com/LizardByte/Sunshine
+    GNU General Public License v3.0
+
+  Apollo - Copyright (C) ClassicOldSong (Yukino Song) and contributors
+    https://github.com/ClassicOldSong/Apollo
+    GNU General Public License v3.0
+    Apollo is itself a modified version of Sunshine.
+
+Juno Park modified this work in 2026 (GNU GPL v3, section 5a). The modifications include, among others:
+the renaming of the program, its service, files and settings to Shell; resizing and automatic release
+of the virtual display; live bitrate changes; remote shutdown and restart; image and file clipboard
+transfer; Ctrl+Alt+Del through the service; adaptive video packet pacing; session history and the
+status dashboard of the web UI; a redesigned web UI theme and icons; English and Korean host messages;
+and the PowerShell installer, recovery, connection and statistics tools. Each source file may contain
+code from Sunshine, Apollo and Shell.
+
+
+Third-party components
+======================
+
+Shell includes or uses the following components. The license texts of everything compiled into
+shell.exe or shipped with it are in the licenses/ folder (installed next to shell.exe); see
+licenses/README.txt. Components marked (Linux) or (macOS) are only used by the
+unmaintained builds for those platforms.
+
+Vendored source (third-party/)
+
+  moonlight-common-c (modified copy from Apollo)
+    https://github.com/moonlight-stream/moonlight-common-c
+    GNU General Public License v3.0 - third-party/moonlight-common-c/LICENSE.txt
+    Includes:
+      ENet - Copyright (c) 2002-2020 Lee Salzman - MIT License
+        third-party/moonlight-common-c/enet/LICENSE
+      Reed-Solomon FEC (reedsolomon/rs.c) - (C) Luigi Rizzo, Alain Knaff, Iwan Timmer
+        BSD-style license, see the file header
+
+  Simple-Web-Server - Copyright (c) 2014-2020 Ole Christian Eidheim
+    https://gitlab.com/eidheim/Simple-Web-Server
+    MIT License - third-party/Simple-Web-Server/LICENSE
+
+  glad (generated OpenGL and EGL loader, Linux)
+    https://github.com/Dav1dde/glad
+    Generated from the Khronos registry; Khronos headers under the Apache License 2.0 and the
+    Khronos MIT-style license, see the file headers in third-party/glad
+
+  NvFBC.h and helper_math.h (Linux) - Copyright (c) NVIDIA Corporation
+    MIT License and BSD 3-Clause License, see the file headers in third-party/nvfbc
+
+  SudoVDA interface headers (sudovda.h, sudovda-ioctl.h) - SudoMaker
+    https://github.com/SudoMaker/SudoVDA
+    MIT and CC0 or Public Domain, whichever is least restrictive (upstream README)
+
+Submodules (see .gitmodules)
+
+  ViGEmClient - Copyright (c) 2018 Benjamin Hoeglinger-Stelzer
+    https://github.com/LizardByte/Virtual-Gamepad-Emulation-Client
+    MIT License
+
+  tray - Copyright (c) 2017 Serge Zaitsev
+    https://github.com/LizardByte/tray
+    MIT License
+
+  libdisplaydevice - LizardByte
+    https://github.com/LizardByte/libdisplaydevice
+    GNU Affero General Public License v3.0 (combined with this GPL v3 work as allowed by section 13
+    of both licenses)
+
+  nvapi-open-source-sdk - Copyright (c) NVIDIA Corporation
+    https://github.com/LizardByte/nvapi-open-source-sdk
+    MIT License
+
+  nv-codec-headers - Copyright (c) NVIDIA Corporation
+    https://github.com/FFmpeg/nv-codec-headers
+    MIT License
+
+  nanors - Copyright (c) 2021 Joseph Calderon
+    https://github.com/sleepybishop/nanors
+    MIT License
+
+  build-deps (prebuilt FFmpeg libraries)
+    https://github.com/LizardByte/build-deps
+    FFmpeg 7.1 (libavcodec, libavutil, libswscale, cbs), configured with --enable-gpl and built with
+    x264, x265 4.1, SVT-AV1 3.0.2, libhdr10plus and the AMD AMF headers (MIT). The FFmpeg libraries in
+    shell.exe are therefore under the GNU General Public License v2 or later (x264 and x265 are GPL v2
+    or later); SVT-AV1 is under the BSD 3-Clause Clear License with the AOMedia Patent License 1.0,
+    libhdr10plus under the Apache License 2.0. See https://ffmpeg.org/legal.html.
+
+  googletest - Copyright 2008 Google Inc. - BSD 3-Clause License (tests only)
+  doxyconfig - LizardByte - GNU Affero General Public License v3.0 (documentation build only)
+  inputtino - Copyright (c) 2021-2024 Games on Whales - MIT License (Linux)
+  TPCircularBuffer - Copyright (C) 2012-2013 A Tasty Pixel - zlib-style license (macOS)
+  wayland-protocols - MIT License (Linux)
+  wlr-protocols - MIT-style licenses, see each protocol file (Linux)
+
+Libraries linked from the MSYS2 UCRT64 toolchain in Windows builds
+
+  Statically linked into shell.exe unless noted:
+  Boost 1.89 (Boost Software License 1.0; Boost.Locale uses GNU libiconv, LGPL v2.1 or later),
+  OpenSSL 3 (Apache License 2.0), libcurl (curl license) with libssh2 (BSD 3-Clause), libpsl (MIT),
+  libidn2 and libunistring (LGPL v3 or later, or GPL v2 or later), Brotli (MIT) and Zstandard
+  (BSD 3-Clause), Opus (BSD 3-Clause), miniupnpc (BSD 3-Clause), MinHook (BSD 2-Clause),
+  oneVPL dispatcher (MIT), nlohmann/json (MIT), zlib (zlib License; shipped as zlib1.dll),
+  mingw-w64 runtime and winpthreads (MIT-style), and the GCC runtime libraries (libstdc++, libgcc,
+  libatomic, libssp: GPL v3 with the GCC Runtime Library Exception; libquadmath: LGPL v2.1).
+
+Web UI (src_assets/common/assets/web)
+
+  Vue - Copyright (c) Evan You and contributors - MIT License
+  vue-i18n - Copyright (c) kazuya kawaguchi and contributors - MIT License
+  Bootstrap - Copyright (c) The Bootstrap Authors - MIT License
+  Font Awesome Free - Fonticons, Inc. - icons CC BY 4.0, fonts SIL OFL 1.1, code MIT License
+  QRCode.js (public/assets/js/qrcode.min.js) - Copyright (c) 2012 davidshimjs - MIT License
+  IBM Plex Sans KR (Regular, Medium, SemiBold) and IBM Plex Sans Condensed (Medium, SemiBold)
+    Copyright 2017 IBM Corp. - SIL Open Font License 1.1 - public/assets/fonts/IBM-Plex-OFL.txt
+
+Drivers and installers shipped in the Windows package
+
+  SudoVDA virtual display driver (drivers/sudovda: SudoVDA.dll, SudoVDA.inf, sudovda.cat,
+  sudovda.cer) - SudoMaker
+    https://github.com/SudoMaker/SudoVDA
+    MIT and CC0 or Public Domain, choose the least restrictive (upstream README)
+    See src_assets/windows/drivers/sudovda/README.txt
+
+  nefcon (drivers/sudovda/nefconc.exe) - Copyright (c) Nefarius Software Solutions e.U.
+    https://github.com/nefarius/nefcon
+    MIT License
+
+  ViGEmBus installer (scripts/vigembus_installer.exe, downloaded at build time)
+    - Nefarius Software Solutions e.U.
+    https://github.com/nefarius/ViGEmBus
+    BSD 3-Clause License
+
+
+Trademarks and assets
+=====================
+
+(c) 2018 Valve Corporation. Steam and the Steam logo are trademarks and/or registered trademarks of
+Valve Corporation in the U.S. and/or other countries. All rights reserved.
+
+NVIDIA, GameStream, GeForce and NVENC are trademarks of NVIDIA Corporation. AMD and Intel names are
+trademarks of their respective owners. Moonlight is a project of the Moonlight developers. Shell is
+not affiliated with, endorsed by or sponsored by NVIDIA, LizardByte or the Moonlight project.

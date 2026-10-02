@@ -1,0 +1,5 @@
+moonlight-common-c (modified copy from Apollo)
+https://github.com/moonlight-stream/moonlight-common-c
+License: GNU General Public License v3.0 (the text is in LICENSE next to shell.exe).
+
+------------------------------------------------------------------------------

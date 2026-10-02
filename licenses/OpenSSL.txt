@@ -1,0 +1,5 @@
+OpenSSL 3
+https://www.openssl.org
+License: Apache License 2.0, see Apache-2.0.txt.
+
+------------------------------------------------------------------------------

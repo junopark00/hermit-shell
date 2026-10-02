@@ -1,0 +1,8 @@
+FFmpeg 7.1 (libavcodec, libavutil, libswscale, cbs), prebuilt by LizardByte/build-deps
+https://ffmpeg.org  https://github.com/LizardByte/build-deps
+Configured with --enable-gpl and linked with x264 and x265, so the FFmpeg libraries in
+shell.exe are under the GNU General Public License version 2 or later (see GPL-2.0.txt;
+Shell as a whole is distributed under GPL v3). Source: https://ffmpeg.org/download.html
+Legal notes: https://ffmpeg.org/legal.html
+
+------------------------------------------------------------------------------

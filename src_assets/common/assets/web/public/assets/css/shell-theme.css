@@ -1,0 +1,852 @@
+/*
+ * Shell theme for the web UI: a neutral, dense enterprise look (IBM Carbon-like) shared with the
+ * Hermit client. Grey layers, one teal accent, status colours only for status, 1px borders
+ * instead of shadows, 2px/4px corners, IBM Plex type.
+ *
+ * Linked after Bootstrap and shell.css in template_header.html. It only remaps Bootstrap 5.3
+ * variables and restyles Bootstrap components, so upstream markup keeps working.
+ * Vite bundles Bootstrap into a stylesheet it injects at the end of <head>, i.e. after this file,
+ * so every selector here starts with `html` to win on specificity instead of on source order.
+ *
+ * Contrast (WCAG 2.x):
+ *   light  text #161616 on #F4F4F4 16.45, on #FFFFFF 18.10; secondary #525252 7.10 / 7.81;
+ *          helper #6F6F6F 4.57 / 5.02; link #005D5D 7.01 / 7.71; white on teal #007D79 4.99
+ *   dark   text #F4F4F4 on #161616 16.45, on #262626 13.76; secondary #C6C6C6 10.59 / 8.86;
+ *          helper #A8A8A8 7.61 / 6.36; link #08BDBA 7.75 / 6.48 (accent teal of the Hermit client)
+ *   white on danger #DA1E28 5.00; #161616 on warning #F1C21B 10.75
+ */
+
+@font-face { font-family: "IBM Plex Sans KR"; src: url("../fonts/IBMPlexSansKR-Regular.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "IBM Plex Sans KR"; src: url("../fonts/IBMPlexSansKR-Medium.woff2") format("woff2"); font-weight: 500; font-style: normal; font-display: swap; }
+@font-face { font-family: "IBM Plex Sans KR"; src: url("../fonts/IBMPlexSansKR-SemiBold.woff2") format("woff2"); font-weight: 600 700; font-style: normal; font-display: swap; }
+@font-face { font-family: "IBM Plex Sans Condensed"; src: url("../fonts/IBMPlexSansCondensed-Medium.woff2") format("woff2"); font-weight: 500; font-style: normal; font-display: swap; }
+@font-face { font-family: "IBM Plex Sans Condensed"; src: url("../fonts/IBMPlexSansCondensed-SemiBold.woff2") format("woff2"); font-weight: 600 700; font-style: normal; font-display: swap; }
+
+/* ---------- Tokens shared by both themes ---------- */
+html:root {
+  --shell-font-sans: "IBM Plex Sans KR", "Malgun Gothic", system-ui, sans-serif;
+  --shell-font-mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --shell-font-condensed: "IBM Plex Sans Condensed", "IBM Plex Sans KR", "Malgun Gothic", sans-serif;
+
+  --shell-accent: #007D79;
+  --shell-accent-hover: #006B68;
+  --shell-accent-active: #005D5D;
+  --shell-danger-fill: #DA1E28;
+  --shell-danger-fill-hover: #B81921;
+  --shell-warning: #F1C21B;
+  --shell-header-bg: #161616;
+  --shell-header-text: #C6C6C6;
+  --shell-header-text-active: #F4F4F4;
+  --shell-header-hover: #2C2C2C;
+  --shell-header-border: #393939;
+  --shell-header-indicator: #08BDBA;
+
+  --bs-font-sans-serif: var(--shell-font-sans);
+  --bs-body-font-family: var(--shell-font-sans);
+  --bs-font-monospace: var(--shell-font-mono);
+  --bs-body-font-size: .875rem;
+  --bs-body-line-height: 1.42857;
+
+  --bs-border-radius: 2px;
+  --bs-border-radius-sm: 2px;
+  --bs-border-radius-lg: 4px;
+  --bs-border-radius-xl: 4px;
+  --bs-border-radius-xxl: 4px;
+  --bs-border-radius-pill: 2px;
+}
+
+/* ---------- Light (default) ---------- */
+html:root,
+html[data-bs-theme=light] {
+  --shell-background: #F4F4F4;
+  --shell-layer: #FFFFFF;
+  --shell-layer-2: #F4F4F4;
+  --shell-layer-hover: #E8E8E8;
+  --shell-layer-selected: #E0E0E0;
+  --shell-field: #F4F4F4;
+  --shell-field-hover: #E8E8E8;
+  --shell-menu: #FFFFFF;
+  --shell-menu-hover: #E8E8E8;
+  --shell-border-subtle: #E0E0E0;
+  --shell-border-strong: #8D8D8D;
+  --shell-text: #161616;
+  --shell-text-secondary: #525252;
+  --shell-text-helper: #6F6F6F;
+  --shell-text-disabled: #A8A8A8;
+  --shell-link: #005D5D;
+  --shell-link-hover: #004144;
+  --shell-focus: #007D79;
+  --shell-accent-line: #007D79;
+  --shell-accent-subtle: #D9FBFB;
+  --shell-table-header: #E0E0E0;
+  --shell-secondary-bg: #E0E0E0;
+  --shell-secondary-hover: #C6C6C6;
+  --shell-secondary-text: #161616;
+  --shell-disabled-bg: #C6C6C6;
+  --shell-disabled-text: #8D8D8D;
+  --shell-success: #24A148;
+  --shell-danger: #DA1E28;
+  --shell-info: #0043CE;
+  --shell-danger-text: #DA1E28;
+  --shell-danger-subtle: #FFD7D9;
+  --shell-danger-subtle-text: #A2191F;
+
+  --bs-body-color: #161616;
+  --bs-body-color-rgb: 22, 22, 22;
+  --bs-body-bg: #F4F4F4;
+  --bs-body-bg-rgb: 244, 244, 244;
+  --bs-emphasis-color: #000000;
+  --bs-emphasis-color-rgb: 0, 0, 0;
+  --bs-secondary-color: #525252;
+  --bs-secondary-color-rgb: 82, 82, 82;
+  --bs-secondary-bg: #E8E8E8;
+  --bs-secondary-bg-rgb: 232, 232, 232;
+  --bs-tertiary-color: #6F6F6F;
+  --bs-tertiary-color-rgb: 111, 111, 111;
+  --bs-tertiary-bg: #E8E8E8;
+  --bs-tertiary-bg-rgb: 232, 232, 232;
+  --bs-heading-color: #161616;
+  --bs-border-color: #E0E0E0;
+  --bs-border-color-translucent: #E0E0E0;
+  --bs-link-color: #005D5D;
+  --bs-link-color-rgb: 0, 93, 93;
+  --bs-link-hover-color: #004144;
+  --bs-link-hover-color-rgb: 0, 65, 68;
+  --bs-code-color: #161616;
+  --bs-highlight-bg: #D9FBFB;
+
+  --bs-primary: #007D79;
+  --bs-primary-rgb: 0, 125, 121;
+  --bs-primary-text-emphasis: #005D5D;
+  --bs-primary-bg-subtle: #D9FBFB;
+  --bs-primary-border-subtle: #9EF0F0;
+  --bs-secondary: #525252;
+  --bs-secondary-rgb: 82, 82, 82;
+  --bs-secondary-text-emphasis: #161616;
+  --bs-secondary-bg-subtle: #F4F4F4;
+  --bs-secondary-border-subtle: #E0E0E0;
+  --bs-success: #24A148;
+  --bs-success-rgb: 36, 161, 72;
+  --bs-success-text-emphasis: #161616;
+  --bs-success-bg-subtle: #FFFFFF;
+  --bs-success-border-subtle: #24A148;
+  --bs-info: #0043CE;
+  --bs-info-rgb: 0, 67, 206;
+  --bs-info-text-emphasis: #161616;
+  --bs-info-bg-subtle: #FFFFFF;
+  --bs-info-border-subtle: #0043CE;
+  --bs-warning: #F1C21B;
+  --bs-warning-rgb: 241, 194, 27;
+  --bs-warning-text-emphasis: #161616;
+  --bs-warning-bg-subtle: #FFFFFF;
+  --bs-warning-border-subtle: #F1C21B;
+  --bs-danger: #DA1E28;
+  --bs-danger-rgb: 218, 30, 40;
+  --bs-danger-text-emphasis: #161616;
+  --bs-danger-bg-subtle: #FFFFFF;
+  --bs-danger-border-subtle: #DA1E28;
+  --bs-light-bg-subtle: #FFFFFF;
+  --bs-dark-bg-subtle: #E0E0E0;
+
+  --bs-focus-ring-color: rgba(0, 125, 121, .5);
+  --bs-box-shadow: 0 2px 6px rgba(0, 0, 0, .2);
+  --bs-box-shadow-sm: none;
+  --bs-box-shadow-lg: 0 2px 6px rgba(0, 0, 0, .2);
+}
+
+/* ---------- Dark ---------- */
+html[data-bs-theme=dark] {
+  color-scheme: dark;
+  --shell-background: #161616;
+  --shell-layer: #262626;
+  --shell-layer-2: #393939;
+  --shell-layer-hover: #333333;
+  --shell-layer-selected: #393939;
+  --shell-field: #393939;
+  --shell-field-hover: #474747;
+  --shell-menu: #393939;
+  --shell-menu-hover: #4C4C4C;
+  --shell-border-subtle: #393939;
+  --shell-border-strong: #6F6F6F;
+  --shell-text: #F4F4F4;
+  --shell-text-secondary: #C6C6C6;
+  --shell-text-helper: #A8A8A8;
+  --shell-text-disabled: #6F6F6F;
+  --shell-link: #08BDBA;
+  --shell-link-hover: #3DDBD9;
+  --shell-focus: #08BDBA;
+  --shell-accent-line: #08BDBA;
+  --shell-accent-subtle: #004144;
+  --shell-table-header: #393939;
+  --shell-secondary-bg: #393939;
+  --shell-secondary-hover: #4C4C4C;
+  --shell-secondary-text: #F4F4F4;
+  --shell-disabled-bg: #525252;
+  --shell-disabled-text: #8D8D8D;
+  --shell-success: #42BE65;
+  --shell-danger: #FA4D56;
+  --shell-info: #78A9FF;
+  --shell-danger-text: #FF8389;
+  --shell-danger-subtle: #520408;
+  --shell-danger-subtle-text: #FFD7D9;
+
+  --bs-body-color: #F4F4F4;
+  --bs-body-color-rgb: 244, 244, 244;
+  --bs-body-bg: #161616;
+  --bs-body-bg-rgb: 22, 22, 22;
+  --bs-emphasis-color: #FFFFFF;
+  --bs-emphasis-color-rgb: 255, 255, 255;
+  --bs-secondary-color: #C6C6C6;
+  --bs-secondary-color-rgb: 198, 198, 198;
+  --bs-secondary-bg: #333333;
+  --bs-secondary-bg-rgb: 51, 51, 51;
+  --bs-tertiary-color: #A8A8A8;
+  --bs-tertiary-color-rgb: 168, 168, 168;
+  --bs-tertiary-bg: #333333;
+  --bs-tertiary-bg-rgb: 51, 51, 51;
+  --bs-heading-color: #F4F4F4;
+  --bs-border-color: #393939;
+  --bs-border-color-translucent: #393939;
+  --bs-link-color: #08BDBA;
+  --bs-link-color-rgb: 8, 189, 186;
+  --bs-link-hover-color: #3DDBD9;
+  --bs-link-hover-color-rgb: 61, 219, 217;
+  --bs-code-color: #F4F4F4;
+  --bs-highlight-bg: #004144;
+
+  --bs-primary: #007D79;
+  --bs-primary-rgb: 0, 125, 121;
+  --bs-primary-text-emphasis: #08BDBA;
+  --bs-primary-bg-subtle: #004144;
+  --bs-primary-border-subtle: #005D5D;
+  --bs-secondary: #C6C6C6;
+  --bs-secondary-rgb: 198, 198, 198;
+  --bs-secondary-text-emphasis: #F4F4F4;
+  --bs-secondary-bg-subtle: #262626;
+  --bs-secondary-border-subtle: #393939;
+  --bs-success: #42BE65;
+  --bs-success-rgb: 66, 190, 101;
+  --bs-success-text-emphasis: #F4F4F4;
+  --bs-success-bg-subtle: #262626;
+  --bs-success-border-subtle: #42BE65;
+  --bs-info: #78A9FF;
+  --bs-info-rgb: 120, 169, 255;
+  --bs-info-text-emphasis: #F4F4F4;
+  --bs-info-bg-subtle: #262626;
+  --bs-info-border-subtle: #78A9FF;
+  --bs-warning: #F1C21B;
+  --bs-warning-rgb: 241, 194, 27;
+  --bs-warning-text-emphasis: #F4F4F4;
+  --bs-warning-bg-subtle: #262626;
+  --bs-warning-border-subtle: #F1C21B;
+  --bs-danger: #FA4D56;
+  --bs-danger-rgb: 250, 77, 86;
+  --bs-danger-text-emphasis: #F4F4F4;
+  --bs-danger-bg-subtle: #262626;
+  --bs-danger-border-subtle: #FA4D56;
+  --bs-light-bg-subtle: #262626;
+  --bs-dark-bg-subtle: #393939;
+
+  --bs-focus-ring-color: rgba(8, 189, 186, .5);
+  --bs-box-shadow: 0 2px 6px rgba(0, 0, 0, .5);
+  --bs-box-shadow-sm: none;
+  --bs-box-shadow-lg: 0 2px 6px rgba(0, 0, 0, .5);
+}
+
+/* ---------- Type ---------- */
+html body {
+  font-family: var(--shell-font-sans);
+  font-size: 14px;
+  line-height: 20px;
+  letter-spacing: .16px;
+  -webkit-font-smoothing: antialiased;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+html h1, html .h1 { font-size: 28px; line-height: 36px; font-weight: 400; letter-spacing: 0; }
+html h2, html .h2 { font-size: 20px; line-height: 28px; font-weight: 600; letter-spacing: 0; }
+html h3, html .h3 { font-size: 16px; line-height: 24px; font-weight: 600; letter-spacing: .16px; }
+html h4, html .h4 { font-size: 16px; line-height: 24px; font-weight: 600; letter-spacing: .16px; }
+html h5, html .h5, html h6, html .h6 { font-size: 14px; line-height: 20px; font-weight: 600; }
+html h1.my-4 { margin-top: 32px !important; margin-bottom: 8px !important; }
+html h1.my-4 + p { color: var(--shell-text-secondary); margin-bottom: 24px; }
+
+html code, html pre, html kbd, html samp, html .font-monospace, html .monospace {
+  font-family: var(--shell-font-mono) !important;
+  font-variant-numeric: tabular-nums;
+}
+
+html code {
+  font-size: 13px;
+  color: var(--shell-text);
+  word-break: break-all;
+}
+
+html pre {
+  font-size: 13px;
+  line-height: 20px;
+}
+
+html input[type=number] {
+  font-family: var(--shell-font-sans);
+  font-variant-numeric: tabular-nums;
+}
+
+html .shell-label,
+html .form-label {
+  font-family: var(--shell-font-condensed);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: .32px;
+  color: var(--shell-text-secondary);
+  margin-bottom: 8px;
+}
+
+html .form-text {
+  font-size: 12px;
+  line-height: 16px;
+  letter-spacing: .32px;
+  color: var(--shell-text-helper);
+  margin-top: 4px;
+}
+
+html .text-secondary { color: var(--shell-text-secondary) !important; }
+html .text-primary { color: var(--shell-link) !important; }
+html a { text-underline-offset: 2px; }
+html hr { border-color: var(--shell-border-subtle); opacity: 1; }
+
+/* ---------- Page layout ---------- */
+@media (min-width: 1200px) {
+  html .container, html .container-lg, html .container-md, html .container-sm, html .container-xl, html .container-xxl {
+    max-width: 1232px;
+  }
+}
+
+html .container {
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+/* ---------- Panels ---------- */
+html .card {
+  --bs-card-bg: var(--shell-layer);
+  --bs-card-border-color: var(--shell-border-subtle);
+  --bs-card-border-radius: 4px;
+  --bs-card-inner-border-radius: 3px;
+  --bs-card-cap-bg: var(--shell-layer-2);
+  --bs-card-spacer-y: 16px;
+  --bs-card-spacer-x: 16px;
+  box-shadow: none;
+}
+
+html .card.p-2 { padding: 24px !important; }
+html .card.p-2:has(> .card-body) { padding: 0 !important; }
+html .card.my-4 { margin-top: 24px !important; margin-bottom: 24px !important; }
+html .card.mt-4 { margin-top: 16px !important; }
+
+/* Upstream cards put a <br> under their heading; spacing comes from the heading instead. */
+html .card-body > br { display: none; }
+html .card-body > h2 { font-size: 16px; line-height: 24px; margin-bottom: 4px; }
+html .card-body > p { color: var(--shell-text-secondary); }
+
+html .card-group.p-4 { padding: 8px 0 0 !important; display: flex; flex-direction: row; flex-wrap: wrap; gap: 8px; }
+html .card-group .btn.m-1 { margin: 0 !important; }
+
+html .list-group {
+  --bs-list-group-bg: var(--shell-layer);
+  --bs-list-group-border-color: var(--shell-border-subtle);
+  --bs-list-group-border-radius: 0;
+  --bs-list-group-action-hover-bg: var(--shell-layer-hover);
+  --bs-list-group-active-color: var(--shell-text);
+  --bs-list-group-active-bg: var(--shell-layer-selected);
+  --bs-list-group-active-border-color: var(--shell-border-subtle);
+}
+
+html .list-group-item-light {
+  --bs-list-group-bg: var(--shell-layer);
+  --bs-list-group-color: var(--shell-text);
+}
+
+html .config-page {
+  background-color: var(--shell-layer);
+  border: 1px solid var(--shell-border-subtle) !important;
+  border-top: 0 !important;
+  border-radius: 0 0 4px 4px;
+  padding: 24px !important;
+}
+
+html .config-page .mb-3 { margin-bottom: 24px !important; }
+
+/* ---------- Inline notifications (Bootstrap alerts) ---------- */
+html .alert {
+  --bs-alert-bg: var(--shell-layer);
+  --bs-alert-color: var(--shell-text);
+  --bs-alert-border-color: var(--shell-border-subtle);
+  --bs-alert-link-color: var(--shell-link);
+  --bs-alert-border-radius: 2px;
+  --bs-alert-padding-x: 16px;
+  --bs-alert-padding-y: 12px;
+  border-left: 3px solid var(--shell-alert-accent, var(--shell-border-strong));
+}
+
+html .card .alert,
+html .config-page .alert { --bs-alert-bg: var(--shell-layer-2); }
+
+html .alert-success { --shell-alert-accent: var(--shell-success); }
+html .alert-info { --shell-alert-accent: var(--shell-info); }
+html .alert-warning { --shell-alert-accent: var(--shell-warning); }
+html .alert-danger { --shell-alert-accent: var(--shell-danger); }
+html .alert-primary { --shell-alert-accent: var(--shell-accent); }
+html .alert .fa-xl { font-size: 16px; vertical-align: -1px; color: var(--shell-alert-accent); }
+
+/* ---------- Tags (Bootstrap badges) ---------- */
+html .badge {
+  --bs-badge-font-size: 12px;
+  --bs-badge-font-weight: 500;
+  --bs-badge-padding-x: 6px;
+  --bs-badge-padding-y: 2px;
+  --bs-badge-border-radius: 2px;
+  --bs-badge-color: var(--shell-text);
+  font-family: var(--shell-font-condensed);
+  letter-spacing: .32px;
+  border: 1px solid var(--shell-border-subtle);
+}
+
+html .badge.bg-primary,
+html .badge.bg-secondary,
+html .badge.bg-success,
+html .badge.bg-info,
+html .badge.bg-warning { background-color: var(--shell-layer-2) !important; color: var(--shell-text); }
+html .badge.bg-danger {
+  background-color: var(--shell-danger-subtle) !important;
+  color: var(--shell-danger-subtle-text);
+  border-color: transparent;
+}
+
+/* ---------- Buttons ---------- */
+html .btn {
+  --bs-btn-padding-x: 15px;
+  --bs-btn-padding-y: 7px;
+  --bs-btn-font-size: 14px;
+  --bs-btn-line-height: 20px;
+  --bs-btn-font-weight: 400;
+  --bs-btn-border-radius: 2px;
+  --bs-btn-focus-box-shadow: inset 0 0 0 2px var(--shell-focus), inset 0 0 0 3px var(--shell-layer);
+  --bs-btn-disabled-opacity: 1;
+  letter-spacing: .16px;
+}
+
+html .btn-sm {
+  --bs-btn-padding-x: 11px;
+  --bs-btn-padding-y: 3px;
+  --bs-btn-font-size: 14px;
+}
+
+html .btn .fas, html .btn .fa-solid, html .btn .fab, html .btn .far { font-size: 14px; }
+
+html .btn-primary,
+html .btn-success {
+  --bs-btn-color: #FFFFFF;
+  --bs-btn-bg: var(--shell-accent);
+  --bs-btn-border-color: var(--shell-accent);
+  --bs-btn-hover-color: #FFFFFF;
+  --bs-btn-hover-bg: var(--shell-accent-hover);
+  --bs-btn-hover-border-color: var(--shell-accent-hover);
+  --bs-btn-active-color: #FFFFFF;
+  --bs-btn-active-bg: var(--shell-accent-active);
+  --bs-btn-active-border-color: var(--shell-accent-active);
+  --bs-btn-disabled-color: var(--shell-disabled-text);
+  --bs-btn-disabled-bg: var(--shell-disabled-bg);
+  --bs-btn-disabled-border-color: var(--shell-disabled-bg);
+}
+
+/* pin.html: list/view are implied by launch and shown as a disabled "on" button. Keep them teal
+   (dimmed) so they still read as granted rather than as an unavailable grey button. */
+html .list-group-item .btn-success.btn-sm:disabled {
+  --bs-btn-disabled-color: #FFFFFF;
+  --bs-btn-disabled-bg: var(--shell-accent);
+  --bs-btn-disabled-border-color: var(--shell-accent);
+  opacity: .6;
+}
+
+html .btn-secondary,
+html .btn-info {
+  --bs-btn-color: var(--shell-secondary-text);
+  --bs-btn-bg: var(--shell-secondary-bg);
+  --bs-btn-border-color: var(--shell-secondary-bg);
+  --bs-btn-hover-color: var(--shell-secondary-text);
+  --bs-btn-hover-bg: var(--shell-secondary-hover);
+  --bs-btn-hover-border-color: var(--shell-secondary-hover);
+  --bs-btn-active-color: var(--shell-secondary-text);
+  --bs-btn-active-bg: var(--shell-secondary-hover);
+  --bs-btn-active-border-color: var(--shell-secondary-hover);
+  --bs-btn-disabled-color: var(--shell-disabled-text);
+  --bs-btn-disabled-bg: var(--shell-disabled-bg);
+  --bs-btn-disabled-border-color: var(--shell-disabled-bg);
+}
+
+html .btn-outline-secondary {
+  --bs-btn-color: var(--shell-text);
+  --bs-btn-bg: transparent;
+  --bs-btn-border-color: var(--shell-border-strong);
+  --bs-btn-hover-color: var(--shell-text);
+  --bs-btn-hover-bg: var(--shell-layer-hover);
+  --bs-btn-hover-border-color: var(--shell-border-strong);
+  --bs-btn-active-color: var(--shell-text);
+  --bs-btn-active-bg: var(--shell-layer-selected);
+  --bs-btn-active-border-color: var(--shell-border-strong);
+  --bs-btn-disabled-color: var(--shell-text-disabled);
+  --bs-btn-disabled-bg: transparent;
+  --bs-btn-disabled-border-color: var(--shell-border-subtle);
+}
+
+html .btn-outline-primary {
+  --bs-btn-color: var(--shell-link);
+  --bs-btn-bg: transparent;
+  --bs-btn-border-color: var(--shell-accent);
+  --bs-btn-hover-color: #FFFFFF;
+  --bs-btn-hover-bg: var(--shell-accent);
+  --bs-btn-hover-border-color: var(--shell-accent);
+  --bs-btn-active-color: #FFFFFF;
+  --bs-btn-active-bg: var(--shell-accent-active);
+  --bs-btn-active-border-color: var(--shell-accent-active);
+}
+
+html .btn-danger {
+  --bs-btn-color: #FFFFFF;
+  --bs-btn-bg: var(--shell-danger-fill);
+  --bs-btn-border-color: var(--shell-danger-fill);
+  --bs-btn-hover-color: #FFFFFF;
+  --bs-btn-hover-bg: var(--shell-danger-fill-hover);
+  --bs-btn-hover-border-color: var(--shell-danger-fill-hover);
+  --bs-btn-active-color: #FFFFFF;
+  --bs-btn-active-bg: #750E13;
+  --bs-btn-active-border-color: #750E13;
+  --bs-btn-disabled-color: var(--shell-disabled-text);
+  --bs-btn-disabled-bg: var(--shell-disabled-bg);
+  --bs-btn-disabled-border-color: var(--shell-disabled-bg);
+}
+
+/* Warning buttons (force close, disconnect, terminate) act as a danger outline. */
+html .btn-warning {
+  --bs-btn-color: var(--shell-danger-text);
+  --bs-btn-bg: transparent;
+  --bs-btn-border-color: var(--shell-danger);
+  --bs-btn-hover-color: #FFFFFF;
+  --bs-btn-hover-bg: var(--shell-danger-fill);
+  --bs-btn-hover-border-color: var(--shell-danger-fill);
+  --bs-btn-active-color: #FFFFFF;
+  --bs-btn-active-bg: var(--shell-danger-fill-hover);
+  --bs-btn-active-border-color: var(--shell-danger-fill-hover);
+  --bs-btn-disabled-color: var(--shell-text-disabled);
+  --bs-btn-disabled-bg: transparent;
+  --bs-btn-disabled-border-color: var(--shell-border-subtle);
+}
+
+html .btn-link {
+  --bs-btn-color: var(--shell-link);
+  --bs-btn-hover-color: var(--shell-link-hover);
+  --bs-btn-active-color: var(--shell-link-hover);
+  text-decoration: none;
+}
+
+html .btn-link:hover { background-color: var(--shell-layer-hover); }
+
+html .btn-close { --bs-btn-close-focus-shadow: inset 0 0 0 2px var(--shell-focus); border-radius: 2px; }
+
+/* ---------- Tables ---------- */
+html .table {
+  --bs-table-bg: transparent;
+  --bs-table-color: var(--shell-text);
+  --bs-table-border-color: var(--shell-border-subtle);
+  --bs-table-hover-bg: var(--shell-layer-hover);
+  --bs-table-striped-bg: var(--shell-layer-2);
+  margin-bottom: 0;
+}
+
+html .table > thead th,
+html .table > thead td {
+  background-color: var(--shell-table-header);
+  font-family: var(--shell-font-condensed);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: .32px;
+  color: var(--shell-text);
+  border-bottom: 0;
+  padding: 12px 16px;
+  white-space: nowrap;
+}
+
+html .table > tbody td,
+html .table > tbody th {
+  padding: 10px 16px;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--shell-border-subtle);
+}
+
+html .table-responsive { border: 1px solid var(--shell-border-subtle); }
+
+/* ---------- Tabs ---------- */
+html .nav-tabs,
+html .nav-pills {
+  --bs-nav-link-padding-x: 16px;
+  --bs-nav-link-padding-y: 11px;
+  --bs-nav-link-color: var(--shell-text-secondary);
+  --bs-nav-link-hover-color: var(--shell-text);
+  border-bottom: 1px solid var(--shell-border-subtle);
+  gap: 0;
+}
+
+html .nav-tabs .nav-link,
+html .nav-pills .nav-link {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  margin-bottom: -1px;
+  box-shadow: inset 0 -2px 0 transparent;
+}
+
+html .nav-tabs .nav-link:hover,
+html .nav-pills .nav-link:hover {
+  color: var(--shell-text);
+  box-shadow: inset 0 -2px 0 var(--shell-border-strong);
+}
+
+html .nav-tabs .nav-link.active,
+html .nav-pills .nav-link.active {
+  color: var(--shell-text);
+  background: transparent;
+  font-weight: 600;
+  box-shadow: inset 0 -3px 0 var(--shell-accent-line);
+}
+
+html .nav-tabs .nav-link:focus-visible,
+html .nav-pills .nav-link:focus-visible {
+  outline: 2px solid var(--shell-focus);
+  outline-offset: -2px;
+}
+
+/* ---------- Menus, modals, accordions ---------- */
+html .dropdown-menu {
+  --bs-dropdown-bg: var(--shell-menu);
+  --bs-dropdown-color: var(--shell-text-secondary);
+  --bs-dropdown-border-color: var(--shell-border-subtle);
+  --bs-dropdown-border-radius: 2px;
+  --bs-dropdown-padding-y: 0;
+  --bs-dropdown-link-color: var(--shell-text-secondary);
+  --bs-dropdown-link-hover-color: var(--shell-text);
+  --bs-dropdown-link-hover-bg: var(--shell-menu-hover);
+  --bs-dropdown-link-active-color: var(--shell-text);
+  --bs-dropdown-link-active-bg: var(--shell-layer-selected);
+  --bs-dropdown-item-padding-y: 6px;
+  --bs-dropdown-item-padding-x: 16px;
+  box-shadow: var(--bs-box-shadow);
+}
+
+html .modal {
+  --bs-modal-bg: var(--shell-layer);
+  --bs-modal-border-color: var(--shell-border-subtle);
+  --bs-modal-border-radius: 4px;
+  --bs-modal-inner-border-radius: 3px;
+}
+
+html .accordion {
+  --bs-accordion-bg: var(--shell-layer);
+  --bs-accordion-border-color: var(--shell-border-subtle);
+  --bs-accordion-border-radius: 0;
+  --bs-accordion-inner-border-radius: 0;
+  --bs-accordion-active-bg: var(--shell-layer);
+  --bs-accordion-active-color: var(--shell-text);
+  --bs-accordion-btn-focus-box-shadow: inset 0 0 0 2px var(--shell-focus);
+  --bs-accordion-btn-padding-y: 12px;
+  --bs-accordion-btn-padding-x: 16px;
+  --bs-accordion-btn-icon: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23161616' stroke-width='1.5'%3e%3cpath d='m3 6 5 5 5-5'/%3e%3c/svg%3e");
+  --bs-accordion-btn-active-icon: var(--bs-accordion-btn-icon);
+}
+
+html[data-bs-theme=dark] .accordion-button::after {
+  --bs-accordion-btn-icon: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23F4F4F4' stroke-width='1.5'%3e%3cpath d='m3 6 5 5 5-5'/%3e%3c/svg%3e");
+  --bs-accordion-btn-active-icon: var(--bs-accordion-btn-icon);
+}
+
+html .accordion-button:not(.collapsed) { box-shadow: inset 0 -1px 0 var(--shell-border-subtle); font-weight: 600; }
+
+/* ---------- Form fields ---------- */
+html .form-control,
+html .form-select {
+  background-color: var(--shell-field);
+  color: var(--shell-text);
+  border: 0;
+  border-bottom: 1px solid var(--shell-border-strong);
+  border-radius: 0;
+  min-height: 40px;
+  padding-top: 9px;
+  padding-bottom: 10px;
+  padding-left: 16px;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+html .form-control:hover,
+html .form-select:hover { background-color: var(--shell-field-hover); }
+
+html .form-control:focus,
+html .form-select:focus {
+  background-color: var(--shell-field);
+  color: var(--shell-text);
+  border-bottom-color: var(--shell-border-strong);
+  box-shadow: none;
+  outline: 2px solid var(--shell-focus);
+  outline-offset: -2px;
+}
+
+html .form-control:disabled,
+html .form-select:disabled {
+  background-color: var(--shell-field);
+  color: var(--shell-text-disabled);
+  border-bottom-color: transparent;
+}
+
+html .form-control::placeholder { color: var(--shell-text-helper); opacity: 1; }
+
+html .form-select {
+  --bs-form-select-bg-img: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23161616' stroke-width='1.5' d='m3 6 5 5 5-5'/%3e%3c/svg%3e");
+  padding-right: 40px;
+  background-position: right 12px center;
+}
+
+html[data-bs-theme=dark] .form-select {
+  --bs-form-select-bg-img: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23F4F4F4' stroke-width='1.5' d='m3 6 5 5 5-5'/%3e%3c/svg%3e");
+}
+
+html .input-group-text {
+  background-color: var(--shell-layer-2);
+  border: 0;
+  border-bottom: 1px solid var(--shell-border-strong);
+  border-radius: 0;
+  color: var(--shell-text-secondary);
+}
+
+html .form-check { min-height: 20px; }
+html .form-check-label { font-size: 14px; line-height: 20px; }
+
+html .form-check-input {
+  --bs-form-check-bg: transparent;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  border: 1px solid var(--shell-text);
+  border-radius: 2px;
+}
+
+html .form-check-input:checked,
+html .form-check-input[type=checkbox]:indeterminate {
+  background-color: var(--shell-accent);
+  border-color: var(--shell-accent);
+}
+
+html .form-check-input:focus {
+  border-color: var(--shell-text);
+  box-shadow: none;
+  outline: 2px solid var(--shell-focus);
+  outline-offset: 1px;
+}
+
+html .form-check-input:checked:focus { border-color: var(--shell-accent); }
+
+html .form-switch .form-check-input {
+  width: 32px;
+  height: 16px;
+  border: 0;
+  border-radius: 8px;
+  background-color: var(--shell-border-strong);
+  --bs-form-switch-bg: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='-4 -4 8 8'%3e%3ccircle r='3' fill='%23fff'/%3e%3c/svg%3e");
+}
+
+html .form-switch .form-check-input:focus {
+  --bs-form-switch-bg: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='-4 -4 8 8'%3e%3ccircle r='3' fill='%23fff'/%3e%3c/svg%3e");
+}
+
+html .form-switch .form-check-input:checked { background-color: var(--shell-accent); }
+
+html .form-range::-webkit-slider-thumb { background-color: var(--shell-text); }
+html .form-range::-moz-range-thumb { background-color: var(--shell-text); }
+html .form-range::-webkit-slider-runnable-track { background-color: var(--shell-border-subtle); height: 2px; }
+html .form-range::-moz-range-track { background-color: var(--shell-border-subtle); height: 2px; }
+html .form-range::-webkit-slider-thumb { margin-top: -7px; }
+html .form-range:focus::-webkit-slider-thumb { box-shadow: 0 0 0 2px var(--shell-focus); }
+html .form-range:focus::-moz-range-thumb { box-shadow: 0 0 0 2px var(--shell-focus); }
+
+/* ---------- Page-specific upstream styles ---------- */
+html .troubleshooting-logs {
+  font-family: var(--shell-font-mono) !important;
+  font-size: 13px;
+  line-height: 20px;
+  background-color: var(--shell-layer-2);
+  border: 1px solid var(--shell-border-subtle);
+  padding: 16px;
+}
+
+html .copy-icon { color: var(--shell-text-secondary) !important; border-radius: 2px; }
+html .copy-icon:hover { color: var(--shell-text) !important; background-color: var(--shell-layer-hover) !important; }
+html .dragover { border-top-color: var(--shell-accent) !important; }
+html .env-table td { border-bottom-color: var(--shell-border-subtle) !important; }
+
+/* index.html: the startup-error notification uses a 32px inline icon. */
+html .alert .fa-circle-exclamation { font-size: 16px !important; color: var(--shell-danger); }
+html .alert div[style*="line-height: 32px"] { line-height: 20px !important; }
+html .card-body > i { font-style: normal; font-size: 12px; line-height: 16px; color: var(--shell-text-helper); }
+
+/* Tabs stay on one line and scroll sideways instead of wrapping into several rows. */
+html .nav-tabs {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  scrollbar-width: thin;
+}
+
+html .nav-tabs .nav-item { flex-shrink: 0; }
+
+/* Icon-only row actions in tables and device lists are ghost icon buttons, as in Carbon data tables. */
+html :is(.table td, .list-group-item) .btn:has(> i:only-child) {
+  --bs-btn-bg: transparent;
+  --bs-btn-border-color: transparent;
+  --bs-btn-color: var(--shell-text-secondary);
+  --bs-btn-hover-bg: var(--shell-layer-hover);
+  --bs-btn-hover-border-color: transparent;
+  --bs-btn-hover-color: var(--shell-text);
+  --bs-btn-active-bg: var(--shell-layer-selected);
+  --bs-btn-active-border-color: transparent;
+  --bs-btn-active-color: var(--shell-text);
+  --bs-btn-disabled-bg: transparent;
+  --bs-btn-disabled-border-color: transparent;
+  --bs-btn-disabled-color: var(--shell-text-disabled);
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+html :is(.table td, .list-group-item) .btn-success:has(> i:only-child) { --bs-btn-color: var(--shell-link); }
+html :is(.table td, .list-group-item) :is(.btn-danger, .btn-warning):has(> i:only-child) { --bs-btn-color: var(--shell-danger-text); }
+html :is(.table td, .list-group-item) :is(.btn-danger, .btn-warning):has(> i:only-child):hover {
+  --bs-btn-hover-bg: var(--shell-danger-fill);
+  --bs-btn-hover-color: #FFFFFF;
+}
+
+html .list-group-item { padding: 8px 16px; }
+
+/* login.html / welcome.html: the page heading carries the 45px logo. */
+html .card header h1 { font-size: 24px; line-height: 32px; display: flex; align-items: center; gap: 12px; }
+html .card header h1 img { width: 32px; height: 32px; }
+html main[role=main] .card { min-width: min(400px, 100%); }
+html main[role=main] { padding: 32px 16px; }
+@media (max-width: 767.98px) {
+  html main[role=main] > .d-flex { flex-direction: column; }
+}

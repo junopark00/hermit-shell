@@ -1,0 +1,6 @@
+x265 4.1
+https://bitbucket.org/multicoreware/x265_git
+License: GNU General Public License version 2 or later, see GPL-2.0.txt.
+Copyright (C) 2013-2020 MulticoreWare, Inc
+
+------------------------------------------------------------------------------

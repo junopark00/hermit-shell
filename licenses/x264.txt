@@ -1,0 +1,5 @@
+x264
+https://www.videolan.org/developers/x264.html
+License: GNU General Public License version 2 or later, see GPL-2.0.txt.
+
+------------------------------------------------------------------------------

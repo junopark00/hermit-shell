@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="auto">
+
+<head>
+      <%- header %>
+      <title>Troubleshooting · Shell</title>
+      <style>
+        .troubleshooting-logs {
+          white-space: pre;
+          font-family: monospace;
+          overflow: auto;
+          max-height: 500px;
+          min-height: 500px;
+          font-size: 16px;
+          position: relative;
+        }
+
+        .logs-wrap {
+          position: relative;
+        }
+
+        .copy-icon {
+          position: absolute;
+          z-index: 1;
+          top: 8px;
+          right: 8px;
+          padding: 8px;
+          cursor: pointer;
+          color: var(--bs-body-color);
+          appearance: none;
+          border: none;
+          background: none;
+        }
+
+        .copy-icon:hover {
+          color: var(--bs-secondary-color);
+        }
+      </style>
+</head>
+
+<body id="app" v-cloak>
+  <Navbar></Navbar>
+  <div class="container">
+    <h1 class="my-4">{{ $t('troubleshooting.troubleshooting') }}</h1>
+    <!-- Force Close App -->
+    <div class="card p-2 my-4">
+      <div class="card-body">
+        <h2 id="close_apps">{{ $t('troubleshooting.force_close') }}</h2>
+        <br>
+        <p>{{ $t('troubleshooting.force_close_desc') }}</p>
+        <div class="alert alert-success" v-if="closeAppStatus === true">
+          {{ $t('troubleshooting.force_close_success') }}
+        </div>
+        <div class="alert alert-danger" v-if="closeAppStatus === false">
+          {{ $t('troubleshooting.force_close_error') }}
+        </div>
+        <div>
+          <button class="btn btn-warning" :disabled="closeAppPressed" @click="closeApp">
+            {{ $t('troubleshooting.force_close') }}
+          </button>
+        </div>
+      </div>
+    </div>
+    <!-- Restart Shell -->
+    <div class="card p-2 my-4">
+      <div class="card-body">
+        <h2 id="restart">{{ $t('troubleshooting.restart_shell') }}</h2>
+        <br>
+        <p>{{ $t('troubleshooting.restart_shell_desc') }}</p>
+        <div class="alert alert-success" v-if="serverRestarting">
+          {{ $t('troubleshooting.restart_shell_success') }}
+        </div>
+        <div>
+          <button class="btn btn-warning" :disabled="serverQuitting || serverRestarting" @click="restart">
+            {{ $t('troubleshooting.restart_shell') }}
+          </button>
+        </div>
+      </div>
+    </div>
+    <!-- Quit Shell -->
+    <div class="card p-2 my-4">
+      <div class="card-body">
+        <h2 id="quit">{{ $t('troubleshooting.quit_shell') }}</h2>
+        <br>
+        <p>{{ $t('troubleshooting.quit_shell_desc') }}</p>
+        <div class="alert alert-success" v-if="serverQuit">
+          {{ $t('troubleshooting.quit_shell_success') }}
+        </div>
+        <div class="alert alert-success" v-if="serverQuitting">
+          {{ $t('troubleshooting.quit_shell_success_ongoing') }}
+        </div>
+        <div>
+          <button class="btn btn-warning" :disabled="serverQuitting || serverRestarting" @click="quit">
+            {{ $t('troubleshooting.quit_shell') }}
+          </button>
+        </div>
+      </div>
+    </div>
+    <!-- Reset persistent display device settings -->
+    <div class="card p-2 my-4" v-if="platform === 'windows'">
+      <div class="card-body">
+        <h2 id="dd_reset">{{ $t('troubleshooting.dd_reset') }}</h2>
+        <br>
+        <p style="white-space: pre-line">{{ $t('troubleshooting.dd_reset_desc') }}</p>
+        <div class="alert alert-success" v-if="ddResetStatus === true">
+          {{ $t('troubleshooting.dd_reset_success') }}
+        </div>
+        <div class="alert alert-danger" v-if="ddResetStatus === false">
+          {{ $t('troubleshooting.dd_reset_error') }}
+        </div>
+        <div>
+          <button class="btn btn-warning" :disabled="ddResetPressed" @click="ddResetPersistence">
+            {{ $t('troubleshooting.dd_reset') }}
+          </button>
+        </div>
+      </div>
+    </div>
+    <!-- Logs -->
+    <div class="card p-2 my-4">
+      <div class="card-body">
+        <h2 id="logs">{{ $t('troubleshooting.logs') }}</h2>
+        <br>
+        <div class="d-flex flex-wrap justify-content-between align-items-baseline gap-2 py-2">
+          <p>{{ $t('troubleshooting.logs_desc') }}</p>
+          <input type="text" class="form-control" v-model="logFilter" :placeholder="$t('troubleshooting.logs_find')" style="max-width: 300px; width: 100%">
+        </div>
+        <div class="logs-wrap">
+          <button type="button" class="copy-icon" @click="copyLogs" :title="$t('troubleshooting.logs_copy')" :aria-label="$t('troubleshooting.logs_copy')">
+            <span v-if="logsCopied">{{ $t('troubleshooting.logs_copied') }}</span>
+            <i v-else class="fas fa-copy"></i>
+          </button>
+          <div class="troubleshooting-logs" ref="logsBox">{{ logsLoaded ? actualLogs : $t('troubleshooting.logs_loading') }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { createApp } from 'vue'
+    import { initApp } from './init'
+    import Navbar from './Navbar.vue'
+
+    const app = createApp({
+      components: {
+        Navbar
+      },
+      inject: ['i18n'],
+      data() {
+        return {
+          clients: [],
+          closeAppPressed: false,
+          closeAppStatus: null,
+          ddResetPressed: false,
+          ddResetStatus: null,
+          logs: '',
+          logsLoaded: false,
+          logsCopied: false,
+          logFilter: null,
+          logInterval: null,
+          serverRestarting: false,
+          serverQuitting: false,
+          serverQuit: false,
+          platform: "",
+        };
+      },
+      computed: {
+        actualLogs() {
+          if (!this.logFilter) return this.logs;
+          const filter = this.logFilter.toLowerCase();
+          let lines = this.logs.split("\n");
+          lines = lines.filter(x => x.toLowerCase().indexOf(filter) !== -1);
+          return lines.join("\n");
+        }
+      },
+      created() {
+        fetch("/api/config")
+          .then((r) => r.json())
+          .then((r) => {
+            this.platform = r.platform;
+          });
+
+        this.logInterval = setInterval(() => {
+          this.refreshLogs();
+        }, 5000);
+        this.refreshLogs();
+      },
+      beforeDestroy() {
+        clearInterval(this.logInterval);
+      },
+      methods: {
+        refreshLogs() {
+          fetch("./api/logs", {
+            credentials: 'include'
+          })
+            .then(response => {
+              // Retrieve the Content-Type header
+              const contentType = response.headers.get("Content-Type") || "";
+              // Attempt to extract charset from the header
+              const charsetMatch = contentType.match(/charset=([^;]+)/i);
+              const charset = charsetMatch ? charsetMatch[1].trim() : "utf-8";
+
+              // Read response as an ArrayBuffer and decode it with the correct charset
+              return response.arrayBuffer().then(buffer => {
+                const decoder = new TextDecoder(charset);
+                return decoder.decode(buffer);
+              });
+            })
+            .then(text => {
+              const box = this.$refs.logsBox;
+              // Follow new lines only when the reader is already at the bottom (or on first load).
+              const atBottom = !this.logsLoaded || !box || box.scrollHeight - box.scrollTop - box.clientHeight < 24;
+              this.logs = text;
+              this.logsLoaded = true;
+              if (atBottom) {
+                this.$nextTick(() => {
+                  if (this.$refs.logsBox) {
+                    this.$refs.logsBox.scrollTop = this.$refs.logsBox.scrollHeight;
+                  }
+                });
+              }
+            })
+            .catch(error => console.error("Error fetching logs:", error));
+        },
+        closeApp() {
+          if (!window.confirm(this.i18n.t('troubleshooting.force_close_confirm'))) {
+            return;
+          }
+          this.closeAppPressed = true;
+          fetch("./api/apps/close", {
+            credentials: 'include',
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            }
+          })
+            .then((r) => r.json())
+            .then((r) => r.status)
+            .catch(() => false)
+            .then((status) => {
+              this.closeAppPressed = false;
+              this.closeAppStatus = status;
+              setTimeout(() => {
+                this.closeAppStatus = null;
+              }, 5000);
+            });
+        },
+        copyLogs() {
+          navigator.clipboard.writeText(this.actualLogs).then(() => {
+            this.logsCopied = true;
+            setTimeout(() => {
+              this.logsCopied = false;
+            }, 2000);
+          });
+        },
+        restart() {
+          if (!window.confirm(this.i18n.t('troubleshooting.restart_confirm'))) {
+            return;
+          }
+          this.serverRestarting = true;
+          clearInterval(this.logInterval);
+          // The request usually fails because Shell goes down while answering it. Either way, wait
+          // until the web UI answers again and reload then.
+          fetch("./api/restart", {
+            credentials: 'include',
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            }
+          })
+          .catch(() => {})
+          .finally(() => {
+            setTimeout(() => this.waitForServer(false, 0), 1000);
+          });
+        },
+        // Polls until the old process has gone away and the new one answers. If the web UI never
+        // stops answering (about 10 s), the restart already happened between two polls.
+        waitForServer(wentDown, tries) {
+          fetch("./api/config", { credentials: 'include', cache: 'no-store' })
+            .then(() => {
+              if (wentDown || tries >= 10) {
+                location.reload();
+              } else {
+                setTimeout(() => this.waitForServer(false, tries + 1), 1000);
+              }
+            })
+            .catch(() => setTimeout(() => this.waitForServer(true, tries + 1), 1000));
+        },
+        quit() {
+          if (window.confirm(this.i18n.t('troubleshooting.quit_shell_confirm'))) {
+            this.serverQuitting = true;
+            fetch("./api/quit", {
+              credentials: 'include',
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json'
+              }
+            })
+            .then(() => {
+              this.serverQuitting = false;
+              this.serverQuit = false;
+              alert(this.i18n.t("shell_ui.quit_failed"));
+            })
+            .catch(() => {
+              this.serverQuitting = false;
+              this.serverQuit = true;
+            });
+          }
+        },
+        ddResetPersistence() {
+          this.ddResetPressed = true;
+          fetch("/api/reset-display-device-persistence", {
+            credentials: 'include',
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            }
+          })
+            .then((r) => r.json())
+            .then((r) => {
+              this.ddResetPressed = false;
+              this.ddResetStatus = r.status;
+              setTimeout(() => {
+                this.ddResetStatus = null;
+              }, 5000);
+            });
+        },
+      },
+    });
+
+    initApp(app);
+  </script>
+
+</body>

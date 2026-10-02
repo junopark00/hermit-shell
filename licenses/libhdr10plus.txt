@@ -1,0 +1,5 @@
+libhdr10plus (in x265)
+https://bitbucket.org/multicoreware/x265_git
+License: Apache License 2.0, see Apache-2.0.txt.
+
+------------------------------------------------------------------------------

@@ -1,0 +1,6 @@
+GNU libiconv (via Boost.Locale)
+https://www.gnu.org/software/libiconv/
+License: GNU Lesser General Public License v2.1 or later, see LGPL-2.1.txt.
+Source: https://ftp.gnu.org/gnu/libiconv/
+
+------------------------------------------------------------------------------

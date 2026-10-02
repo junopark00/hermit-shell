@@ -1,0 +1,7 @@
+libunistring (in libcurl via libidn2)
+https://www.gnu.org/software/libunistring/
+License: GNU Lesser General Public License v3.0 or later (see LGPL-3.0.txt), or
+GNU General Public License v2.0 or later (see GPL-2.0.txt), at your option.
+Source: https://ftp.gnu.org/gnu/libunistring/
+
+------------------------------------------------------------------------------
