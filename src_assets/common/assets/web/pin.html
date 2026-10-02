@@ -10,10 +10,11 @@
       padding-top: 2em;
     }
 
-    /* Shell: wide enough for the permission toggles, the inputs follow the card */
+    /* Shell: wide enough for the permission toggles, but never wider than the screen (the form
+       spans the page width, so a phone in portrait gets a card that fits) */
     .pair-card {
-      width: 44rem;
-      max-width: 100%;
+      width: 100%;
+      max-width: 44rem;
     }
   </style>
 </head>
@@ -22,7 +23,7 @@
   <Navbar></Navbar>
   <div id="content" class="container content-container d-flex flex-column align-items-center">
     <!-- PIN pairing only: Moonlight and Hermit clients pair with a PIN (no OTP pairing). -->
-    <form class="form d-flex flex-column align-items-center" id="form" @submit.prevent="registerDevice">
+    <form class="form d-flex flex-column align-items-center w-100" id="form" @submit.prevent="registerDevice">
       <div class="card flex-column d-flex p-4 mb-4 pair-card">
         <input type="text" inputmode="numeric" pattern="\d{4}" maxlength="4" :placeholder="$t('pin.pin_placeholder')" autofocus id="pin-input" class="form-control mt-2" v-model="pin" required />
         <input type="text" :placeholder="$t('pin.device_name')" id="name-input" class="form-control mt-4" v-model="deviceName" />
