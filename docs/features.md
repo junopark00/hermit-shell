@@ -152,8 +152,8 @@ The upstream `/actions/clipboard` endpoint carries text only. On Windows Shell a
   ASCII), and nothing left to copy once links are skipped.
 - `files=stream` in the `type=info` reply means the host has `type=filelist` and `type=filedata`.
   Clients read the reply lines by key, so older clients ignore it. Hermit then puts host files on the
-  local clipboard as virtual files and downloads each file only while it is pasted; older clients and
-  Hermit for Android keep using `type=files`.
+  local clipboard as virtual files and downloads each file only while it is pasted; older Hermit
+  versions keep using `type=files`. Hermit for Android does not sync files.
 - `type=filelist` expands folders like `type=files` (same name checks, links and junctions skipped,
   1,000 items, read with the signed-in user's rights) but reads no file data. The reply is UTF-8 text:
 
