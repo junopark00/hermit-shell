@@ -2458,9 +2458,17 @@ namespace nvhttp {
 
 #ifdef _WIN32
     if (clipboard_type == "info"sv) {
-      // Sequence number first so a change between the two reads makes the client re-check later.
-      auto seq = platf::clipboard::sequence();
-      auto type = platf::clipboard::current_type();
+      // Shell: read together with the clipboard open, so the type belongs to that sequence number
+      // and is never read while another program is still writing (503: ask again later).
+      std::uint32_t seq = 0;
+      std::string type;
+      if (platf::clipboard::snapshot(seq, type) == platf::clipboard::status_e::busy) {
+        // Clients poll this often, so no log line at info level
+        BOOST_LOG(debug) << "Clipboard info for [" << named_cert_p->name << "]: another program is using the clipboard";
+        response->write(SimpleWeb::StatusCode::server_error_service_unavailable, clipboard_busy_body);
+        response->close_connection_after_response = true;
+        return;
+      }
       // "files=stream": type=filelist and type=filedata are available. Clients read the lines they
       // know by key, so older ones ignore it.
       response->write("seq=" + std::to_string(seq) + "\ntype=" + type + "\nfiles=stream\n");

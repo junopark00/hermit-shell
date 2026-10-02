@@ -58,6 +58,15 @@ namespace platf::clipboard {
   std::string current_type();
 
   /**
+   * @brief Shell: the sequence number and the content kind read together, with the clipboard open,
+   * so they belong to the same content. A program that writes the clipboard empties it first (the
+   * sequence number changes then) and adds its formats afterwards; reading in between would
+   * report the new number with "none", and the client would not look at that number again.
+   * @return busy when another program holds the clipboard (it is being written): ask again later.
+   */
+  status_e snapshot(std::uint32_t &seq, std::string &type);
+
+  /**
    * @brief Clipboard text (CF_UNICODETEXT) as UTF-8.
    * @return ok (the text may still be empty), none, busy, or failed when the listed text cannot be read.
    */

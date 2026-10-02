@@ -213,8 +213,11 @@ The upstream `/actions/clipboard` endpoint carries text only. On Windows Shell a
 - When another program holds the clipboard, Shell retries for about 0.3 seconds. If it is still
   held, `GET type=text`, `type=image`, `type=files` and `type=filelist` and every `POST` answer 503
   with the body `clipboard-busy` and a line of text; clients keep their last change number and try
-  again later. `type=info` and `type=filedata` never wait for the clipboard; `type=filedata` answers
-  the same 503 only while an earlier read of the same file is stalled (see below). An empty 200
+  again later. `type=info` reads the change number and the content type together with the clipboard
+  open, so the type always belongs to that number (a program that writes the clipboard empties it
+  first and adds its formats afterwards); it waits at most about 50 ms and otherwise answers the same
+  503. `type=filedata` never waits for the clipboard; it answers the same 503 only while an earlier
+  read of the same file is stalled (see below). An empty 200
   reply (`type=text`, `type=image`, `type=files`, `type=filelist`) means only that the clipboard
   holds nothing of that type. `GET type=text` answers 500 (plain text) when the clipboard lists text
   that cannot be read; real text is a 200 with the text.

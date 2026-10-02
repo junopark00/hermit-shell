@@ -308,6 +308,20 @@ namespace platf::clipboard {
     return GetClipboardSequenceNumber();
   }
 
+  status_e snapshot(std::uint32_t &seq, std::string &type) {
+    // Short retries only: this answers a request on the HTTPS io thread.
+    for (int attempt = 0; attempt < 5; ++attempt) {
+      if (OpenClipboard(nullptr)) {
+        seq = GetClipboardSequenceNumber();
+        type = current_type();
+        CloseClipboard();
+        return status_e::ok;
+      }
+      Sleep(10);
+    }
+    return status_e::busy;
+  }
+
   std::string current_type() {
     // IsClipboardFormatAvailable does not need the clipboard to be open.
     if (IsClipboardFormatAvailable(CF_UNICODETEXT)) {
