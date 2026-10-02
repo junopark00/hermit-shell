@@ -136,7 +136,26 @@ void mainThreadLoop(const std::shared_ptr<safe::event_t<bool>> &shutdown_event) 
   }
 }
 
+namespace {
+  int run_main(int argc, char *argv[]);
+}  // namespace
+
 int main(int argc, char *argv[]) {
+  const int code = run_main(argc, argv);
+#ifdef _WIN32
+  // Shell: run_main's guards (display, logging and the rest) are done here, but exit() has not
+  // started on atexit entries or static objects yet. A clipboard file job that nvhttp had to leave
+  // behind, stuck in a call that could not be cancelled, could still use them (loggers, OpenSSL),
+  // so end the process now in that case.
+  if (nvhttp::clipboard_threads_left_behind) {
+    std::_Exit(code);
+  }
+#endif
+  return code;
+}
+
+namespace {
+int run_main(int argc, char *argv[]) {
   lifetime::argv = argv;
 
   task_pool_util::TaskPool::task_id_t force_shutdown = nullptr;
@@ -163,17 +182,6 @@ int main(int argc, char *argv[]) {
   if (config::parse(argc, argv)) {
     return 0;
   }
-
-#ifdef _WIN32
-  // Shell: runs after main() returned (its locals, such as the display and log guards, are done)
-  // and before the static objects built before this point are destroyed. A clipboard file job that
-  // nvhttp had to leave behind could still use them, so end the process here in that case.
-  std::atexit([]() {
-    if (nvhttp::clipboard_threads_left_behind) {
-      std::_Exit(lifetime::desired_exit_code);
-    }
-  });
-#endif
 
   auto log_deinit_guard = logging::init(config::shell.min_log_level, config::shell.log_file);
   if (!log_deinit_guard) {
@@ -502,3 +510,4 @@ int main(int argc, char *argv[]) {
 
   return lifetime::desired_exit_code;
 }
+}  // namespace

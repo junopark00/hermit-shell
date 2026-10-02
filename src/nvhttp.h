@@ -64,8 +64,9 @@ namespace nvhttp {
 
   /**
    * @brief Shell: set when start() left clipboard file jobs behind, detached and stuck in a call
-   * that could not be cancelled. main() then ends the process before static destruction, which
-   * such a job could still be using (loggers, OpenSSL).
+   * that could not be cancelled. main() then ends the process right after its body returns, before
+   * exit() runs atexit handlers (OpenSSL's cleanup among them) or destroys static objects (loggers),
+   * which such a job could still be using.
    */
   extern std::atomic_bool clipboard_threads_left_behind;
 
