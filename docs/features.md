@@ -169,9 +169,11 @@ The upstream `/actions/clipboard` endpoint carries text only. On Windows Shell a
   write time. Errors: 400 bad arguments, 404 the index is not a file of the list, 409 the file is gone
   or changed, 410 unknown or dropped list, 416 offset past the end, 500 the file cannot be opened. If
   the file cannot be read to the end, the connection closes early.
-- The HTTPS server ends a response that takes longer than 300 seconds, so long downloads are cut;
-  clients continue with `offset=<bytes received>`. The 4 GB limit for lists only bounds what one copy
-  can bring over (about 18 minutes at 30 Mbps); file data is never buffered.
+- The HTTPS server ends a request whose upload or response takes longer than 30 minutes (1,800
+  seconds), which leaves a 256 MB `type=files` transfer room down to about 1.2 Mbps. Longer
+  `type=filedata` downloads are cut; clients continue with `offset=<bytes received>`. The 4 GB limit
+  for lists only bounds what one copy can bring over (about 18 minutes at 30 Mbps); file data is never
+  buffered.
 - Shell logs each list (device, item count, total bytes) and the end of each file download (device,
   index, bytes, time), never names or contents.
 - Clients that only know `type=text` are unaffected.

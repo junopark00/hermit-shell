@@ -2234,6 +2234,10 @@ namespace nvhttp {
     https_server.config.reuse_address = true;
     https_server.config.address = net::af_to_any_address_string(address_family);
     https_server.config.port = port_https;
+    // Shell: SimpleWeb ends a request whose body or response takes longer than timeout_content
+    // (300 s by default). 256 MB type=files transfers need more on slow links; type=filedata
+    // downloads are still cut after this and resume with offset.
+    https_server.config.timeout_content = 1800;
 
     http_server.default_resource["GET"] = not_found<SimpleWeb::HTTP>;
     http_server.resource["^/serverinfo$"]["GET"] = serverinfo<SimpleWeb::HTTP>;
