@@ -1484,11 +1484,16 @@ namespace confighttp {
    * @code{.json}
    * {
    *   "pin": "<pin>",
-   *   "name": "Friendly Client Name"
+   *   "name": "Friendly Client Name",
+   *   "perm": <uint32_t>
    * }
    * @endcode
    *
-   * @api_examples{/api/pin| POST| {"pin":"1234","name":"My PC"}}
+   * Shell: `perm` is optional. It is the permission bit set the paired device gets, masked with
+   * `PERM::_all` like in updateClient. Without it the first paired device gets every permission and
+   * later ones the default (list and view).
+   *
+   * @api_examples{/api/pin| POST| {"pin":"1234","name":"My PC","perm":119480064}}
    */
   void savePin(resp_https_t response, req_https_t request) {
     if (!validateContentType(response, request, "application/json") || !authenticate(response, request)) {
@@ -1504,7 +1509,12 @@ namespace confighttp {
       nlohmann::json output_tree;
       std::string pin = input_tree.value("pin", "");
       std::string name = input_tree.value("name", "");
-      output_tree["status"] = nvhttp::pin(pin, name);
+      // Shell: permissions chosen while pairing; absent or null keeps the default
+      std::optional<crypto::PERM> perm;
+      if (auto it = input_tree.find("perm"); it != input_tree.end() && !it->is_null()) {
+        perm = static_cast<crypto::PERM>(it->get<uint32_t>() & static_cast<uint32_t>(crypto::PERM::_all));
+      }
+      output_tree["status"] = nvhttp::pin(pin, name, perm);
       send_response(response, output_tree);
     } catch (std::exception &e) {
       BOOST_LOG(warning) << "SavePin: "sv << e.what();

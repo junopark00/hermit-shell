@@ -629,8 +629,11 @@ namespace nvhttp {
       }
       named_cert_p->cert = std::move(client.cert);
       named_cert_p->uuid = uuid_util::uuid_t::generate().string();
-      // If the device is the first one paired with the server, assign full permission.
-      if (client_root.named_devices.empty()) {
+      if (client.perm) {
+        // Shell: the permissions chosen on the pairing page win, also for the first device.
+        named_cert_p->perm = *client.perm;
+      } else if (client_root.named_devices.empty()) {
+        // If the device is the first one paired with the server, assign full permission.
         named_cert_p->perm = PERM::_all;
       } else {
         named_cert_p->perm = PERM::_default;
@@ -801,7 +804,7 @@ namespace nvhttp {
     }
   }
 
-  bool pin(std::string pin, std::string name) {
+  bool pin(std::string pin, std::string name, std::optional<crypto::PERM> perm) {
     pt::ptree tree;
     if (map_id_sess.empty()) {
       return false;
@@ -831,6 +834,11 @@ namespace nvhttp {
 
     if (!name.empty()) {
       sess.client.name = name;
+    }
+
+    // Shell: kept on the session until clientpairingsecret stores the device
+    if (perm) {
+      sess.client.perm = *perm & PERM::_all;
     }
 
     // response to the request for pin

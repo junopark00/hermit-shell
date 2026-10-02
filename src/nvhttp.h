@@ -9,6 +9,7 @@
 #include <string>
 #include <chrono>
 #include <list>
+#include <optional>
 
 // lib includes
 #include <boost/property_tree/ptree.hpp>
@@ -103,6 +104,8 @@ namespace nvhttp {
       std::string uniqueID = {};
       std::string cert = {};
       std::string name = {};
+      /// Shell: the permissions chosen on the pairing page; empty when the PIN came without a choice.
+      std::optional<crypto::PERM> perm = {};
     } client;
 
     std::unique_ptr<crypto::aes_t> cipher_key = {};
@@ -186,12 +189,15 @@ namespace nvhttp {
    * @brief Compare the user supplied pin to the client pin.
    * @param pin The user supplied pin.
    * @param name The user supplied name.
+   * @param perm Shell: the permissions the paired device gets, already masked with `PERM::_all`.
+   *             Without it the first device gets every permission and later ones `PERM::_default`.
    * @return `true` if the pin is correct, `false` otherwise.
    * @examples
    * bool pin_status = nvhttp::pin("1234", "laptop");
+   * bool pin_status = nvhttp::pin("1234", "laptop", crypto::PERM::_all);
    * @examples_end
    */
-  bool pin(std::string pin, std::string name);
+  bool pin(std::string pin, std::string name, std::optional<crypto::PERM> perm = std::nullopt);
 
   /**
    * @brief Remove single client.
