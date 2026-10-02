@@ -83,6 +83,13 @@ editor.
   pairing the reply is `status_code` 400 ("Unpair this device in the host's web UI"), so a client's
   Unpair command shows an error instead of a false success. Paired devices are removed under
   **Device Management**. Over HTTPS `/unpair` still answers 404.
+- Limitation: unfinished pairing attempts are told apart only by the client's uniqueid. Stock
+  Moonlight-style clients (and older Hermit for Android) all send the same one, `0123456789ABCDEF`,
+  so a pairing attempt from one such device replaces another such device's unfinished attempt, and
+  `/unpair` (unauthenticated, over HTTP) cancels the unfinished attempt of that uniqueid whichever
+  device started it. Paired devices are identified by their certificate and are never affected.
+  Hermit for Windows sends a per-install id; Hermit for Android is being changed to send a
+  per-install id for pairing.
 - **Prefill for companion clients**: Hermit and Hermit for Android open
   `https://<host>:47990/pin#pin=1234&name=<URL-encoded device name>`. The fragment never leaves the
   browser; the page fills the fields from it, focuses the **Pair** button and removes the fragment from
