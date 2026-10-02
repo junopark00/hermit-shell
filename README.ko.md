@@ -97,6 +97,41 @@ Apollo는 지우지 않고 사용 안 함으로 바꿉니다. 자세한 내용�
 페어링한 기기의 권한은 같은 페이지의 **기기 관리**에서 언제든지 바꿀 수 있습니다. Hermit과 Hermit for Android는
 PIN과 기기 이름이 미리 채워진 페어링 페이지를 열어 주므로, 권한만 확인하고 **페어링**을 누르면 됩니다.
 
+## 원격 접속
+
+집 밖에서 스트리밍하려면 클라이언트가 호스트에 연결할 방법이 필요합니다.
+
+- **[Tailscale](https://tailscale.com)(대부분의 경우 권장)**: 호스트와 각 클라이언트 기기에 설치하고 같은
+  tailnet에 로그인한 뒤, Hermit에서 호스트를 Tailscale 주소(`100.x.y.z`)나 MagicDNS 이름으로 추가합니다
+  (Tailscale로는 자동 검색이 되지 않습니다). 공유기 설정을 바꾸거나 포트를 열 필요가 없고,
+  통신사가 CGNAT을 쓰는 환경에서도 동작합니다. Shell은 Tailscale 주소를 같은 네트워크로 보므로 페어링과 웹 UI도
+  Tailscale로 쓸 수 있습니다.
+- **UPnP**: **설정 > 네트워크 > UPnP**(기본 꺼짐)를 켜면 UPnP를 지원하는 공유기에 스트리밍 포트를 자동으로
+  열어 달라고 요청합니다.
+- **직접 포트 포워딩**: 호스트의 고정 내부 IP로 TCP 47984, 47989, 48010과 UDP 47998, 47999, 48000을
+  포워딩합니다(기본 포트 47989 기준). **웹 UI 포트 47990은 절대 포워딩하지 마세요.**
+
+UPnP와 포트 포워딩은 CGNAT 환경에서는 동작하지 않고, 이 방식을 쓸 때는 집에서 먼저 페어링해야 합니다.
+Wake-on-LAN은 대체로 같은 네트워크에서만 동작합니다. 자세한 내용은 [docs/remote-access.md](docs/remote-access.md)를
+참고하세요.
+
+## AI 에이전트와 함께 설정하기
+
+[`skills/hermit-shell-setup`](skills/hermit-shell-setup) 폴더에는 AI 에이전트용 Agent Skill이 들어 있습니다.
+에이전트가 이 안내를 따라 사용자의 언어로 처음부터 끝까지 설정을 도와줍니다. PC 사양 확인, Shell 설치, 첫 로그인과
+Hermit 또는 Hermit for Android 페어링, 원격 접속 방식(Tailscale, UPnP, 포트 포워딩) 선택과 설정, 문제 해결까지
+다룹니다.
+
+[Claude Code](https://claude.com/claude-code)에서 쓰려면 호스트로 쓸 PC에서 Claude Code를 실행하고,
+`hermit-shell-setup` 폴더를 개인 스킬 폴더 `~/.claude/skills/`(Windows에서는 `%USERPROFILE%\.claude\skills\`)나
+Claude Code를 시작하는 폴더의 `.claude/skills/`에 복사합니다. 그다음 Shell을 설정해 달라고 요청하거나
+`/hermit-shell-setup`을 입력하면 됩니다. Agent Skills 형식(`SKILL.md`가 든 폴더)을 지원하는 다른 에이전트에서도
+같은 방식으로 쓸 수 있습니다.
+
+이 스킬은 에이전트에게 단계마다 설명하고 결과를 확인한 뒤 넘어갈 것, PC·공유기·계정에 변화를 주는 일은 먼저 물어볼
+것, 비밀번호는 다루지 말 것을 지시합니다. 비밀번호는 사용자가 직접 입력합니다. 공유기 설정은 에이전트가 직접 바꾸지
+않고 방법을 안내하며, 웹 UI를 인터넷에 열지 않습니다.
+
 ## 설정
 
 모든 설정은 웹 UI의 **설정**에 있습니다. 설정은 `C:\Program Files\Shell\config\shell.conf`에 저장되고, 같은
@@ -135,6 +170,7 @@ Shell에만 있는 설정:
 ## 문서
 
 - [기능](docs/features.md): 가상 디스플레이, 전원 제어, 비트레이트 변경, 클립보드, 세션 기록.
+- [원격 접속](docs/remote-access.md): Tailscale, UPnP, 포트 포워딩, CGNAT, Wake-on-LAN.
 - [도구](docs/tools.md): 설치 도구, 진단과 백업, 연결 점검과 Wake-on-LAN, 스트림 통계.
 - [빌드](docs/building.md): 소스에서 Shell 빌드.
 - [기여 안내](CONTRIBUTING.md)와 [보안 정책](SECURITY.md).
@@ -179,7 +215,8 @@ nlohmann/json 소스도 내려받습니다.
   설정합니다. 제거해도 정책은 남으므로 필요 없으면
   `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System`에서 지우세요.
 - **웹 UI**: 직접 만든 사용자 이름과 비밀번호로 보호되고 HTTPS로 제공되며, 기본적으로 같은 네트워크에서만 접속할
-  수 있습니다. 이 설정을 유지하고, 믿을 수 있는 기기만 페어링하세요.
+  수 있습니다(사설 주소, 링크 로컬 주소, Tailscale/CGNAT 주소를 같은 네트워크로 봅니다). 이 설정을 유지하고,
+  믿을 수 있는 기기만 페어링하세요.
 - 취약점은 [SECURITY.md](SECURITY.md)에 따라 비공개로 알려 주세요.
 
 ## 라이선스와 감사의 말

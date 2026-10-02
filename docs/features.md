@@ -15,7 +15,7 @@ behaves and which client endpoints it uses.
 | Firewall rule | `Shell` (inbound, TCP and UDP, for `shell.exe`) |
 | Web UI | `https://localhost:47990` |
 | Environment for apps | `SHELL_APP_*` and `SHELL_CLIENT_*`; the `SUNSHINE_*` names are set as well, for scripts written for Sunshine-based hosts |
-| Protocol | GameStream compatible: mDNS `_nvstream._tcp`; TCP 47984, 47989, 47990 (web UI) and 48010, UDP 47998-48000, 48002 and 48010 (default ports) |
+| Protocol | GameStream compatible: mDNS `_nvstream._tcp`; TCP 47984, 47989, 47990 (web UI) and 48010, UDP 47998-48000 (default ports; see [remote-access.md](remote-access.md)) |
 
 The host name shown to clients is **Settings > General > Host Name** (`shell_name`). A configuration
 file that still uses the Sunshine key `sunshine_name` is read as well.

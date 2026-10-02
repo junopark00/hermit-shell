@@ -104,6 +104,43 @@ The permissions of a paired device can be changed at any time under **Device Man
 page. Hermit and Hermit for Android open the Pairing page with the PIN and device name already filled
 in; you only check the permissions and press **Pair**.
 
+## Remote access
+
+To stream from outside your home network, the client needs a way to reach the host:
+
+- **[Tailscale](https://tailscale.com) (recommended for most people)**: install it on the host and on
+  each client device, sign in to the same tailnet, and add the host in Hermit by its Tailscale address
+  (`100.x.y.z`) or MagicDNS name (automatic discovery does not cross Tailscale). No router changes and
+  no open ports, and it works when your provider uses CGNAT. Shell treats Tailscale addresses as the
+  local network, so pairing and the web UI work over it too.
+- **UPnP**: **Settings > Network > UPnP** (off by default) asks a compatible router to forward the
+  streaming ports automatically.
+- **Manual port forwarding** to the host's fixed local IP: TCP 47984, 47989 and 48010, UDP 47998,
+  47999 and 48000 (default base port 47989). **Never forward 47990, the web UI.**
+
+UPnP and port forwarding do not work behind CGNAT, and with them you pair at home first. Wake-on-LAN
+generally works only from the local network. See [docs/remote-access.md](docs/remote-access.md) for
+the details.
+
+## Guided setup with an AI agent
+
+The folder [`skills/hermit-shell-setup`](skills/hermit-shell-setup) holds an Agent Skill:
+step-by-step instructions that an AI agent can follow to walk you through the whole setup in your own
+language. It checks your PC, installs Shell, guides the first login and pairing with Hermit or Hermit
+for Android, helps you choose and set up remote access (Tailscale, UPnP or port forwarding) and
+troubleshoots problems.
+
+To use it with [Claude Code](https://claude.com/claude-code), run Claude Code on the PC that will be
+the host and copy the `hermit-shell-setup` folder into your personal skills folder, `~/.claude/skills/`
+(on Windows `%USERPROFILE%\.claude\skills\`), or into `.claude/skills/` of the folder you start Claude
+Code in. Then ask it to set up Shell, or type `/hermit-shell-setup`. Other agents that support the
+Agent Skills format (a folder with a `SKILL.md`) can load it the same way.
+
+The skill tells the agent to explain each step and check it before moving on, to ask before anything
+that changes your PC, router or accounts, and never to handle your passwords: you type them yourself.
+The agent guides you through router settings instead of changing them, and never opens the web UI to
+the internet.
+
 ## Configuration
 
 All settings are in the web UI under **Settings**. They are stored in
@@ -144,6 +181,7 @@ readable by Administrators and SYSTEM only, because it holds copies of the priva
 ## Documentation
 
 - [Features](docs/features.md): virtual display, power control, live bitrate, clipboard, session history.
+- [Remote access](docs/remote-access.md): Tailscale, UPnP, port forwarding, CGNAT and Wake-on-LAN.
 - [Tools](docs/tools.md): installer, diagnostics and backups, connection checks and Wake-on-LAN, stream
   statistics.
 - [Building](docs/building.md): building Shell from source.
@@ -189,7 +227,8 @@ and, when they are not installed, the Boost and nlohmann/json sources.
   secure attention sequence. Uninstalling leaves the policy in place; remove it under
   `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System` if you no longer need it.
 - **Web UI**: protected by the user name and password you create, served over HTTPS and by default
-  reachable from the local network only. Keep it that way, and pair only devices you trust.
+  reachable from the local network only (Shell counts private, link-local and Tailscale/CGNAT
+  addresses as local). Keep it that way, and pair only devices you trust.
 - Report vulnerabilities privately, as described in [SECURITY.md](SECURITY.md).
 
 ## License and credits
