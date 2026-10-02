@@ -428,13 +428,7 @@
   "index": {
     "description": "Shell är en självhostad spelstreaming-värd för Hermit.",
     "download": "Ladda ner",
-    "installed_version_not_stable": "Du kör en förhandsversion av Shell. Du kan uppleva buggar eller andra problem. Vänligen rapportera eventuella problem du stöter på. Tack för att du hjälper till att göra Shell till en bättre programvara!",
-    "loading_latest": "Laddar senaste versionen...",
-    "new_pre_release": "En ny förhandsversion är tillgänglig!",
-    "new_stable": "En ny stabil version är tillgänglig!",
     "startup_errors": "<b>Observera!</b> Shell upptäckte dessa fel vid uppstart. Vi <b>REKOMMENDERAR STARKT</b> att du åtgärdar dem innan streaming.",
-    "version_dirty": "Tack för att du hjälper till att göra Shell till en bättre programvara!",
-    "version_latest": "Du kör den senaste versionen av Shell",
     "welcome": "Hej, Shell!"
   },
   "navbar": {

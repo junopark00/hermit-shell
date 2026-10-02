@@ -369,13 +369,7 @@
   "index": {
     "description": "Shell, Hermit için kendi kendine barındırılan bir oyun akışı sunucusudur.",
     "download": "İndir",
-    "installed_version_not_stable": "Shell'ın yayın öncesi bir sürümünü çalıştırıyorsunuz. Hatalar veya başka sorunlar yaşayabilirsiniz. Lütfen karşılaştığınız sorunları bildirin. Shell'ın daha iyi bir yazılım olmasına yardımcı olduğunuz için teşekkür ederiz!",
-    "loading_latest": "Son sürüm yükleniyor...",
-    "new_pre_release": "Yeni Bir Yayın Öncesi Sürüm Mevcut!",
-    "new_stable": "Yeni bir Kararlı Sürüm Kullanılabilir!",
     "startup_errors": "<b>Dikkat!</b> Shell başlatma sırasında bu hataları tespit etti. Yayınlamadan önce bunları düzeltmenizi <b>ŞİDDETLE TAVSİYE</b> EDERİZ.",
-    "version_dirty": "Shell'ı daha iyi bir yazılım haline getirmeye yardımcı olduğunuz için teşekkür ederiz!",
-    "version_latest": "Shell'ın en son sürümünü çalıştırıyorsunuz",
     "welcome": "Merhaba, Günışığı!"
   },
   "navbar": {

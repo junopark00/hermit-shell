@@ -392,13 +392,7 @@
   "index": {
     "description": "Shell es un servidor de transmisión de juego autoalojado para Hermit.",
     "download": "Descargar",
-    "installed_version_not_stable": "Está ejecutando una versión pre-lanzamiento de Shell. Puede que experimente fallos u otros problemas. Por favor, informe de cualquier problema que encuentre. ¡Gracias por ayudar a hacer de Shell un mejor software!",
-    "loading_latest": "Cargando la última versión...",
-    "new_pre_release": "¡Una nueva versión de pre-lanzamiento está disponible!",
-    "new_stable": "¡Una nueva versión estable está disponible!",
     "startup_errors": "<b>Atención.</b> Shell ha detectado estos errores durante el arranque. <b>RECOMENDAMOS ENCARECIDAMENTE</b> solucionarlos antes de transmitir.",
-    "version_dirty": "¡Gracias por ayudar a hacer de Shell un mejor software!",
-    "version_latest": "Está ejecutando la última versión de Shell",
     "welcome": "¡Hola, Shell!"
   },
   "navbar": {

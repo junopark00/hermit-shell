@@ -369,13 +369,7 @@
   "index": {
     "description": "Shell ist ein selbst gehosteter Game-Stream-Host für Hermit.",
     "download": "Download",
-    "installed_version_not_stable": "Sie verwenden eine Vor-Release-Version von Shell. Sie können Fehler oder andere Probleme haben. Bitte melde alle Probleme, auf die du triffst. Danke, dass du dabei geholfen hast, Shell zu einer besseren Software zu machen!",
-    "loading_latest": "Lade neueste Version...",
-    "new_pre_release": "Eine neue Pre-Release Version ist verfügbar!",
-    "new_stable": "Eine neue Stable Version ist verfügbar!",
     "startup_errors": "<b>Achtung!</b> Shell erkannte diese Fehler während des Starts. Wir <b>STRONGLY EMPFOHLEN</b> beheben sie vor dem Streaming.",
-    "version_dirty": "Vielen Dank, dass Sie dazu beigetragen haben, Shell zu einer besseren Software zu machen!",
-    "version_latest": "Du verwendest die neueste Version von Shell",
     "welcome": "Hallo, Shell!"
   },
   "navbar": {

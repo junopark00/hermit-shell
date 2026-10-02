@@ -499,13 +499,7 @@
   "index": {
     "description": "Shell은 Hermit 등 GameStream 클라이언트를 위한 셀프 호스팅 게임 스트리밍 호스트입니다.",
     "download": "다운로드",
-    "installed_version_not_stable": "Shell의 정식 출시 이전 버전을 실행 중입니다. 버그나 기타 문제가 발생할 수 있습니다. 문제가 발생하면 알려 주세요. Shell 개선에 도움을 주셔서 감사합니다!",
-    "loading_latest": "새로운 업데이트를 확인하는 중...",
-    "new_pre_release": "새로운 사전 출시 버전이 출시되었습니다!",
-    "new_stable": "새로운 안정 버전이 출시되었습니다!",
     "startup_errors": "<b>주의!</b> 시작하는 중에 오류가 발생했습니다. 스트리밍하기 전에 <b>먼저 해결하세요.</b>",
-    "version_dirty": "Shell 개선에 도움을 주셔서 감사합니다!",
-    "version_latest": "최신 버전의 Shell을 실행 중입니다.",
     "welcome": "홈"
   },
   "navbar": {

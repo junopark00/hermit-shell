@@ -377,13 +377,7 @@
   "index": {
     "description": "Shell je samostatný hostitel herního streamu pro Hermit.",
     "download": "Stáhnout",
-    "installed_version_not_stable": "Používáte předběžnou verzi Shell. Mohou se vyskytnout chyby nebo jiné problémy. Nahlaste prosím všechny problémy, se kterými se setkáte. Děkujeme, že pomáháte vytvořit lepší software Shell!",
-    "loading_latest": "Načítání nejnovější verze...",
-    "new_pre_release": "K dispozici je nová verze před vydáním!",
-    "new_stable": "K dispozici je nová stabilní verze!",
     "startup_errors": "<b>Pozor!</b> Shell zjistil tyto chyby při spuštění. <b>DŮRAZNĚ DOPORUČUJEME</b> je před streamováním opravit.",
-    "version_dirty": "Děkujeme, že pomáháte vylepšovat software Shell!",
-    "version_latest": "Používáte nejnovější verzi Shell",
     "welcome": "Ahoj, Shell!"
   },
   "navbar": {

@@ -366,13 +366,7 @@
   "index": {
     "description": "Shell è una piattaforma autonoma di game stream per Hermit.",
     "download": "Download",
-    "installed_version_not_stable": "Stai eseguendo una versione in anteprima di Shell. Potresti riscontrare bug o altri problemi. Si prega di segnalare eventuali problemi incontrati. Grazie per aver contribuito a rendere Shell un software migliore!",
-    "loading_latest": "Caricamento dell'ultima versione...",
-    "new_pre_release": "Una nuova versione pre-rilascio è disponibile!",
-    "new_stable": "Una nuova versione Stabile è disponibile!",
     "startup_errors": "<b>Attenzione!</b> Shell ha rilevato questi errori durante l'avvio. Ti <b>raccomandamo vivamente </b> di risolverli prima dello streaming.",
-    "version_dirty": "Grazie per aver contribuito a rendere Shell un software migliore!",
-    "version_latest": "Stai eseguendo l'ultima versione di Shell",
     "welcome": "Ciao, Shell!"
   },
   "navbar": {

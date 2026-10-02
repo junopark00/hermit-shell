@@ -377,13 +377,7 @@
   "index": {
     "description": "A Shell a Hermit saját szervezésű játékstream hostja.",
     "download": "Letöltés",
-    "installed_version_not_stable": "Ön a Shell kiadás előtti verzióját futtatja. Előfordulhatnak hibák vagy egyéb problémák. Kérjük, jelentse a felmerülő problémákat. Köszönjük, hogy segít a Shell jobbá tételében!",
-    "loading_latest": "Legújabb kiadás betöltése...",
-    "new_pre_release": "Elérhető egy új előzetes verzió!",
-    "new_stable": "Elérhető egy új stabil verzió!",
     "startup_errors": "<b>Figyelem!</b> A Shell ezeket a hibákat észlelte az indítás során. <b>KIFEJEZETTEN AJÁNLJUK</b> ezek kijavítását a streamelés előtt.",
-    "version_dirty": "Köszönjük, hogy segítesz a Shell jobb szoftverré tételében!",
-    "version_latest": "A Shell legújabb verzióját futtatod",
     "welcome": "Helló, Shell!"
   },
   "navbar": {

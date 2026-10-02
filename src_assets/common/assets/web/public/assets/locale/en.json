@@ -485,13 +485,7 @@
   "index": {
     "description": "Shell is a self-hosted game streaming host for Hermit and other GameStream clients.",
     "download": "Download",
-    "installed_version_not_stable": "You are running a pre-release version of Shell. You may experience bugs or other issues. Please report any issues you encounter. Thank you for helping to improve Shell!",
-    "loading_latest": "Loading latest release...",
-    "new_pre_release": "A new Pre-Release Version is Available!",
-    "new_stable": "A new Stable Version is Available!",
     "startup_errors": "<b>Attention!</b> Shell detected these errors during startup. We <b>STRONGLY RECOMMEND</b> fixing them before streaming.",
-    "version_dirty": "Thank you for helping to improve Shell!",
-    "version_latest": "You are running the latest version of Shell",
     "welcome": "Home"
   },
   "navbar": {

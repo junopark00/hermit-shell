@@ -377,13 +377,7 @@
   "index": {
     "description": "Shell là một nền tảng phát trực tiếp game tự chủ cho Hermit.",
     "download": "Tải xuống",
-    "installed_version_not_stable": "Bạn đang sử dụng phiên bản thử nghiệm của Shell. Bạn có thể gặp phải lỗi hoặc các vấn đề khác. Vui lòng báo cáo bất kỳ vấn đề nào bạn gặp phải. Cảm ơn bạn đã giúp Shell trở thành phần mềm tốt hơn!",
-    "loading_latest": "Đang tải phiên bản mới nhất...",
-    "new_pre_release": "Phiên bản thử nghiệm mới đã có sẵn!",
-    "new_stable": "Phiên bản ổn định mới đã có sẵn!",
     "startup_errors": "<b>Lưu ý!</b> Shell đã phát hiện các lỗi sau đây trong quá trình khởi động. Chúng tôi <b>KHUYẾN NGHỊ MẠNH MẼ bạn</b> khắc phục các lỗi này trước khi bắt đầu phát trực tuyến.",
-    "version_dirty": "Cảm ơn bạn đã giúp Shell trở thành phần mềm tốt hơn!",
-    "version_latest": "Bạn đang sử dụng phiên bản mới nhất của Shell.",
     "welcome": "Chào nắng!"
   },
   "navbar": {
