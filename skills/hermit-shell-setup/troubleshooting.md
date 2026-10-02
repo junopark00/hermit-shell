@@ -72,21 +72,31 @@ Get-NetTCPConnection -State Listen -LocalPort 47984,47989,47990,48010 -ErrorActi
 
 The user sets a new user name and password; they type both themselves.
 
-`shell.exe` has a command-line option inherited from Sunshine, `--creds <username> <password>`, that
-writes new web UI credentials (`src/entry_handler.cpp`, listed in `shell.exe --help`). Because the
-password would end up on the command line, let the user run it themselves in a new elevated
-PowerShell window (not through you), with the service stopped. The first line stops that window
-from saving its commands to the PowerShell history file:
+If they still know the current password, they change it in the web UI under **Change Password**.
+
+If it is lost, `shell.exe --creds <username> <password>` writes new web UI credentials (documented in
+Shell's [tools guide](https://github.com/junopark00/hermit-shell/blob/main/docs/tools.md#resetting-the-web-ui-password)).
+It replaces only the stored user name and password hash in `config\shell_state.json`; paired devices
+and settings stay. Shell reads the credentials at start, so the service is stopped first and started
+again after. Let the user run this themselves in an elevated PowerShell window; the `Read-Host`
+prompts keep the password out of the command history and out of your view:
 
 ```powershell
-Set-PSReadLineOption -HistorySaveStyle SaveNothing
 Stop-Service ShellService
-& 'C:\Program Files\Shell\shell.exe' --creds <new user name> <new password>
+$user = Read-Host 'New web UI user name'
+$secret = Read-Host 'New web UI password' -AsSecureString
+$bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)
+try {
+    & "$env:ProgramFiles\Shell\shell.exe" --creds $user ([Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr))
+} finally {
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+}
 Start-Service ShellService
 ```
 
-The user closes that window afterwards. This option is not described in Shell's own documentation;
-if it does not work, look at the log rather than guessing.
+Tell the user to avoid double quotes (`"`) in the new password (Windows PowerShell 5.1 does not pass
+them to programs reliably). Then the user signs in at `https://localhost:47990` with the new credentials. If Shell was installed
+somewhere other than `C:\Program Files\Shell`, adjust the path.
 
 ## Starting over
 

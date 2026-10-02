@@ -133,8 +133,10 @@ troubleshoots problems.
 To use it with [Claude Code](https://claude.com/claude-code), run Claude Code on the PC that will be
 the host and copy the `hermit-shell-setup` folder into your personal skills folder, `~/.claude/skills/`
 (on Windows `%USERPROFILE%\.claude\skills\`), or into `.claude/skills/` of the folder you start Claude
-Code in. Then ask it to set up Shell, or type `/hermit-shell-setup`. Other agents that support the
-Agent Skills format (a folder with a `SKILL.md`) can load it the same way.
+Code in. Then ask it to set up Shell (Claude uses a skill when the request matches its description),
+or type `/hermit-shell-setup`. See Claude Code's [skills documentation](https://code.claude.com/docs/en/skills).
+The skill follows the open [Agent Skills](https://agentskills.io) format, so other agents that support
+it can load the same folder.
 
 The skill tells the agent to explain each step and check it before moving on, to ask before anything
 that changes your PC, router or accounts, and never to handle your passwords: you type them yourself.

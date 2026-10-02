@@ -125,8 +125,9 @@ Hermit 또는 Hermit for Android 페어링, 원격 접속 방식(Tailscale, UPnP
 [Claude Code](https://claude.com/claude-code)에서 쓰려면 호스트로 쓸 PC에서 Claude Code를 실행하고,
 `hermit-shell-setup` 폴더를 개인 스킬 폴더 `~/.claude/skills/`(Windows에서는 `%USERPROFILE%\.claude\skills\`)나
 Claude Code를 시작하는 폴더의 `.claude/skills/`에 복사합니다. 그다음 Shell을 설정해 달라고 요청하거나
-`/hermit-shell-setup`을 입력하면 됩니다. Agent Skills 형식(`SKILL.md`가 든 폴더)을 지원하는 다른 에이전트에서도
-같은 방식으로 쓸 수 있습니다.
+`/hermit-shell-setup`을 입력하면 됩니다(요청이 스킬 설명과 맞으면 Claude가 스킬을 알아서 사용합니다). 자세한 내용은
+Claude Code의 [스킬 문서](https://code.claude.com/docs/en/skills)를 참고하세요. 이 스킬은 공개 표준인
+[Agent Skills](https://agentskills.io) 형식을 따르므로, 이 형식을 지원하는 다른 에이전트에서도 같은 폴더를 쓸 수 있습니다.
 
 이 스킬은 에이전트에게 단계마다 설명하고 결과를 확인한 뒤 넘어갈 것, PC·공유기·계정에 변화를 주는 일은 먼저 물어볼
 것, 비밀번호는 다루지 말 것을 지시합니다. 비밀번호는 사용자가 직접 입력합니다. 공유기 설정은 에이전트가 직접 바꾸지

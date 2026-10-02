@@ -121,6 +121,33 @@ firewall, drivers, certificates); with `-InstallDir`, `-BackupRoot` and `-OldIns
 against scratch folders. `-SasPolicyKey` points the Ctrl+Alt+Del policy step at another registry key.
 `shell\Test-InstallShell.ps1` uses these.
 
+## Resetting the web UI password
+
+If you still know the current password, change it in the web UI under **Change Password**.
+
+If it is lost, `shell.exe` can write new web UI credentials (`shell.exe --creds <username> <password>`,
+also listed by `shell.exe --help`). It replaces only the user name and password stored in
+`config\shell_state.json` (salted and hashed); paired devices and settings stay. Shell reads the
+credentials when it starts, so stop the service first and start it again afterwards. In an elevated
+PowerShell (the prompts keep the password out of the command history):
+
+```powershell
+Stop-Service ShellService
+$user = Read-Host 'New web UI user name'
+$secret = Read-Host 'New web UI password' -AsSecureString
+$bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)
+try {
+    & "$env:ProgramFiles\Shell\shell.exe" --creds $user ([Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr))
+} finally {
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+}
+Start-Service ShellService
+```
+
+The password is passed to `shell.exe` on its command line for the moment it runs. Avoid double quotes
+(`"`) in it: Windows PowerShell 5.1 does not pass them to programs reliably. Use the path you
+installed Shell to if it is not `C:\Program Files\Shell`.
+
 ## Build-Shell.ps1 and Update-Shell.ps1
 
 ```powershell

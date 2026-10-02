@@ -29,8 +29,9 @@ Steps:
 
 1. **Host PC**: install Tailscale for Windows from <https://tailscale.com/download> and sign in.
 2. **Each client device**: install Tailscale (Windows installer, or the Google Play app on Android)
-   and sign in **to the same account / tailnet**. On Android, Tailscale uses the system VPN slot, so
-   it cannot run together with another VPN app.
+   and sign in **to the same account / tailnet**. On Android only one VPN app can be active at a time
+   ([Android docs](https://developer.android.com/develop/connectivity/vpn)), so Tailscale cannot run
+   together with another VPN app.
 3. **Find the host's Tailscale address**: in the Tailscale app or admin console, or on the host
    (read-only):
 
@@ -38,8 +39,10 @@ Steps:
    tailscale ip -4
    ```
 
-   It is a `100.x.y.z` address. With MagicDNS on (the default for new tailnets), the host's machine
-   name also works.
+   It is a `100.x.y.z` address ([`tailscale ip`](https://tailscale.com/kb/1080/cli)). With MagicDNS,
+   on by default for tailnets created since October 2022
+   ([MagicDNS](https://tailscale.com/kb/1081/magicdns)), the host's machine name also works, or its
+   full name `<machine>.<tailnet>.ts.net`.
 4. **Add the host in Hermit by that address**: Hermit for Windows **+** (Add PC manually), Hermit for
    Android **+** on the PC list. Automatic discovery (mDNS) does not cross Tailscale, so the host does
    not appear by itself. A host already paired at home is the same host: adding it by its Tailscale
@@ -66,15 +69,18 @@ How Shell treats Tailscale (verified in the source):
 
 Tips:
 
-- Speed: `tailscale ping <host>` from the client shows whether the connection is **direct** or goes
-  **via DERP** (a relay). A relayed connection works but adds latency and limits bandwidth; it often
+- Speed: `tailscale ping <host>` from the client shows whether the connection is **direct** (the
+  peer's IP) or relayed **via DERP** (a relay, shown with its city code such as `nyc` or `fra`;
+  [CLI](https://tailscale.com/kb/1080/cli)). A relayed connection works but adds latency and limits bandwidth; it often
   becomes direct after a moment. Some strict networks (company, hotel) only allow relays.
-- In the Tailscale admin console the user may turn off **key expiry** for the host, so it does not
-  drop out of the tailnet after the key expires (a Tailscale account setting; explain, let the user
-  decide).
-- Tailscale on Windows normally connects when a user is signed in. If the host should be reachable
-  after a restart before anyone signs in, Tailscale's **Run unattended** option (in its settings menu)
-  is meant for that; explain it and let the user decide.
+- **Key expiry**: device keys expire after 180 days by default and the device then has to sign in
+  again. For an always-on host the user may choose **Machines → the host's menu → Disable key
+  expiry** in the admin console ([Key expiry](https://tailscale.com/kb/1028/key-expiry)); explain the
+  trade-off and let the user decide.
+- **Run unattended** (Windows): without it, Tailscale disconnects when the user signs out or the PC
+  restarts, until someone signs in again. Right-click the Tailscale tray icon → **Preferences** →
+  **Run unattended** keeps it connected ([Run unattended](https://tailscale.com/kb/1088/run-unattended)).
+  Explain it and let the user decide.
 - **Wake-on-LAN does not work over Tailscale**: a PC that sleeps or is shut down is not running
   Tailscale, and the wake packet ("magic packet") only works inside the local network. Keep the host
   on (or wake it from a device at home) when using it remotely.

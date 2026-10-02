@@ -27,7 +27,9 @@ tailnet). It is a separate service with its own account.
 1. Install Tailscale on the host PC and sign in.
 2. Install Tailscale on each client device (Windows, Android) and sign in to the **same tailnet**.
 3. Look up the host's Tailscale address (`100.x.y.z`, shown in the Tailscale app or by
-   `tailscale ip -4` on the host) or its MagicDNS name.
+   `tailscale ip -4` on the host) or its MagicDNS name (on by default for tailnets created since
+   October 2022: the machine name, or `<machine>.<tailnet>.ts.net`;
+   [MagicDNS](https://tailscale.com/kb/1081/magicdns)).
 4. Add the host in Hermit by that address: **+** (Add PC manually) in Hermit for Windows, **+** on the
    PC list in Hermit for Android. Automatic discovery (mDNS) does not work across Tailscale, so the
    host does not appear by itself.
@@ -46,11 +48,19 @@ How Shell treats Tailscale connections:
 
 Notes:
 
-- `tailscale ping <host>` shows whether the path is direct or relayed ("via DERP"). Relayed
-  connections work but add latency and limit bandwidth.
+- `tailscale ping <host>` shows whether the path is direct (the peer's IP) or relayed through a DERP
+  server (shown by its city code; [CLI](https://tailscale.com/kb/1080/cli)). Relayed connections work
+  but add latency and limit bandwidth.
 - Wake-on-LAN does not work over Tailscale: a sleeping or shut-down PC is not running Tailscale.
-- Tailscale settings that matter for an always-on host, such as disabling key expiry for the host in
-  the admin console or running unattended on Windows, are described in Tailscale's own documentation.
+- Device keys expire after 180 days by default; for an always-on host you can disable key expiry under
+  **Machines → the host's menu → Disable key expiry** in the admin console
+  ([Key expiry](https://tailscale.com/kb/1028/key-expiry)).
+- On Windows, Tailscale disconnects when the user signs out or the PC restarts until someone signs in.
+  **Run unattended** (tray icon → **Preferences**) keeps the host connected
+  ([Run unattended](https://tailscale.com/kb/1088/run-unattended)).
+- On Android only one VPN app can be active at a time
+  ([Android docs](https://developer.android.com/develop/connectivity/vpn)), so Tailscale cannot run
+  alongside another VPN app.
 
 ## UPnP
 
