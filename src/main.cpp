@@ -413,7 +413,7 @@ int main(int argc, char *argv[]) {
     BOOST_LOG(fatal) << "HTTP interface failed to initialize"sv;
 
 #ifdef _WIN32
-    BOOST_LOG(fatal) << "To relaunch Shell successfully, use the shortcut in the Start Menu. Do not run shell.exe manually."sv;
+    BOOST_LOG(fatal) << "Shell runs as the ShellService service, which starts with Windows. Restart that service (or use the tray icon) instead of running shell.exe manually; the web UI is at https://localhost:47990."sv;
     std::this_thread::sleep_for(10s);
 #endif
 
