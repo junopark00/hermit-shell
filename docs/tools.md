@@ -217,7 +217,7 @@ The `Verdict` of a sequence:
 - `WokeOnLan`: a broadcast was used, or the packet was sent from the same subnet or to a private
   address. **Not proof that waking over the internet works.**
 - `WokeUnknownPath`: the host woke, but the sender's location is unknown (no `-LanAddress`). Sending to
-  a public address from inside the home network only tests NAT loopback.
+  a public address from inside the host's local network only tests NAT loopback.
 - `WokeViaRemotePath`: sent only directly to non-private addresses from outside the host's subnet, and
   the host answered. The only result that shows remote wake works.
 - `WakeNotConfirmed`: no answer in time. Lost packets, an unsupported power state and a slow boot are

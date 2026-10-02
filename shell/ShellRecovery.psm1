@@ -59,7 +59,7 @@ function Get-ShellDiagnostic {
     $presence = foreach ($name in $files) {
         [pscustomobject]@{ File = $name; Present = (Test-Path -LiteralPath (Join-Path $config $name) -PathType Leaf) }
     }
-    # Remote access over a Tailscale network is common for streaming away from home
+    # Tailscale is a common way to reach a streaming host from outside the local network
     $tailscaleService = Get-Service Tailscale -ErrorAction SilentlyContinue
     [pscustomobject]@{
         SchemaVersion = 1; CreatedUtc = [DateTime]::UtcNow.ToString('o')

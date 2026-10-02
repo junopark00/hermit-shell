@@ -57,7 +57,7 @@ rem Run the sc command to create/reconfigure the service
 sc %SC_CMD% %SERVICE_NAME% binPath= "\"%SERVICE_BIN%\"" start= %SERVICE_START_TYPE% DisplayName= "Shell Service"
 
 rem Set the description of the service
-sc description %SERVICE_NAME% "Shell is a self-hosted game stream host for Hermit."
+sc description %SERVICE_NAME% "Shell is a self-hosted game streaming host for Hermit and other GameStream clients."
 
 rem Start the new service
 net start %SERVICE_NAME%

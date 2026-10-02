@@ -1,12 +1,12 @@
 #requires -Version 5.1
-# Connection probe, Wake-on-LAN and readiness wait for a Shell (Shell-based) host.
+# Connection probe, Wake-on-LAN and readiness wait for a Shell host (or another GameStream host).
 # Works on Windows PowerShell 5.1 and PowerShell 7. Read-only except for the
 # UDP magic packets that Send-ShellWake emits on request.
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# Same port scheme as the Hermit clients so results are comparable
-# with the "Wake PC" button in the stock clients.
+# Same ports as the Hermit and Moonlight clients, so results are comparable
+# with their "Wake PC" action.
 $script:StaticWolPorts = @(9, 47009)
 $script:DynamicWolPortOffsets = @(9, 10, 11, 13, 21)   # 47998, 47999, 48000, 48002, 48010 relative to 47989
 $script:DefaultBasePort = 47989
@@ -142,7 +142,7 @@ function ConvertFrom-ShellServerInfo {
         $doc = [System.Xml.XmlDocument]::new(); $doc.XmlResolver = $null; $doc.Load($reader)
     } finally { $reader.Dispose() }
     $root = $doc.DocumentElement
-    if ($null -eq $root -or $root.LocalName -ne 'root') { throw 'Response is not a Hermit serverinfo document.' }
+    if ($null -eq $root -or $root.LocalName -ne 'root') { throw 'Response is not a GameStream serverinfo document.' }
     $pick = { param($name) $n = $root.SelectSingleNode($name); if ($n) { $n.InnerText } else { $null } }
     [pscustomobject]@{
         StatusCode = $(if ($root.HasAttribute('status_code')) { [int]$root.GetAttribute('status_code') } else { $null })
@@ -182,7 +182,7 @@ function Get-ShellServerInfo {
 function Test-ShellHost {
     <#
     .SYNOPSIS
-    Probes an Shell host over the unauthenticated HTTP serverinfo endpoint and the HTTPS port.
+    Probes a Shell host over the unauthenticated HTTP serverinfo endpoint and the HTTPS port.
     .DESCRIPTION
     Resolves the target, classifies each address (LAN, Internet, Tailscale...), checks TCP on the
     HTTP and HTTPS ports and parses /serverinfo. Nothing is written to the host. The MAC address is
@@ -238,11 +238,11 @@ function Test-ShellHost {
 function Send-ShellWake {
     <#
     .SYNOPSIS
-    Sends Wake-on-LAN magic packets the same way the stock Hermit clients do.
+    Sends Wake-on-LAN magic packets the same way the Hermit and Moonlight clients do.
     .DESCRIPTION
     Targets are each resolved address of -Target plus, unless -NoBroadcast, the limited broadcast
     255.255.255.255 and every local IPv4 subnet broadcast. Ports are 9, 47009 and the five
-    GFE/Shell ports relative to -BasePort. A "sent" datagram only means the local socket accepted
+    GameStream ports relative to -BasePort. A "sent" datagram only means the local socket accepted
     it; delivery through a router is never implied.
     #>
     [CmdletBinding()]
@@ -364,15 +364,15 @@ $script:VerdictText = @{
     NoMacAddress      = 'No MAC address was supplied, so no wake packet could be built.'
     NoPacketSent      = 'No datagram left this machine; check the target list and local network.'
     WakeNotConfirmed  = 'Host did not answer within the timeout. The packet may not have arrived, the PC may not support waking from this power state, or boot took longer than the timeout.'
-    WokeOnLan         = 'Host came up after a wake sent with LAN broadcast or from the same subnet. This is not evidence that waking from outside the home works.'
-    WokeUnknownPath   = 'Host came up, but the sender position relative to the host LAN is unknown (pass -LanAddress). If this ran from inside the home, a public address only proves NAT loopback.'
+    WokeOnLan         = 'Host came up after a wake sent with LAN broadcast or from the same subnet. This is not evidence that waking from outside the local network works.'
+    WokeUnknownPath   = 'Host came up, but the sender position relative to the host LAN is unknown (pass -LanAddress). If this ran from inside the host network, a public address only proves NAT loopback.'
     WokeViaRemotePath = 'Host came up after directed packets to non-LAN addresses only, sent from outside the host subnet.'
 }
 
 function Invoke-ShellWakeSequence {
     <#
     .SYNOPSIS
-    Probe, wake if needed, wait for Shell, and label the result honestly.
+    Probe, wake if needed, wait for Shell, and label what the result shows.
     .PARAMETER LanAddress
     The host's LAN IPv4 address. Used only to decide whether this machine sits on the same subnet,
     which caps the verdict at WokeOnLan.
@@ -422,7 +422,7 @@ function Invoke-ShellWakeSequence {
         Targets = @($Target); BasePort = $BasePort; SenderOnHostLan = $senderOnLan
         Verdict = $verdict; VerdictText = $script:VerdictText[$verdict]
         InitialProbe = $initial; Wake = $wake; Wait = $wait
-        Note = 'Internet wake is only demonstrated by WokeViaRemotePath from a device outside the home, repeated for JustShutDown and LongOffline.'
+        Note = 'Internet wake is only demonstrated by WokeViaRemotePath from a device outside the local network, repeated for JustShutDown and LongOffline.'
     }
 }
 
