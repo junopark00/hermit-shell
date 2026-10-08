@@ -12,7 +12,7 @@
  * Every message is one frame, both ways (integers little-endian):
  *   u8 code | u32 payload length | payload
  * A request's code is an op_e, a reply's code a reply_e. Payloads:
- *   snapshot        request: none; reply: u32 change number | content type ("text", "image", "files", "none")
+ *   snapshot        request: none; reply: u32 change number | content type ("text", "image", "files", "other", "none")
  *   get_text        request: none; reply: UTF-8 text
  *   get_image       request: none; reply: PNG
  *   get_files       request: none; reply: a path list (below)

@@ -60,7 +60,8 @@ namespace platf::clipboard {
 
   /**
    * @brief Kind of content currently on the clipboard, checked in this order.
-   * @return "text", "image", "files" or "none".
+   * @return "text", "image", "files", "other" (content in formats Shell does not sync) or "none"
+   * (empty).
    */
   std::string current_type();
 
@@ -74,7 +75,7 @@ namespace platf::clipboard {
   status_e snapshot(std::uint32_t &seq, std::string &type);
 
   /**
-   * @brief Shell: what is seen on the clipboard, for the log when the type is "none": whether the
+   * @brief Shell: what is seen on the clipboard, for the log when the type is "other": whether the
    * helper or this process answered, the formats listed, the clipboard owner's process id, and
    * the window station and desktop of the reading thread.
    */
