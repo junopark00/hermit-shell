@@ -2473,7 +2473,12 @@ namespace nvhttp {
       std::string type;
       if (platf::clipboard::snapshot(seq, type) == platf::clipboard::status_e::busy) {
         // Clients poll this often, so no log line at info level
-        BOOST_LOG(debug) << "Clipboard info for [" << named_cert_p->name << "]: another program is using the clipboard";
+        // Shell: once per change number; clients poll this often
+        static std::atomic<std::uint32_t> busy_seq {0};
+        auto now_seq = platf::clipboard::sequence();
+        if (busy_seq.exchange(now_seq) != now_seq) {
+          BOOST_LOG(info) << "Clipboard info for [" << named_cert_p->name << "] not done: another program is using the clipboard";
+        }
         response->write(SimpleWeb::StatusCode::server_error_service_unavailable, clipboard_busy_body);
         response->close_connection_after_response = true;
         return;

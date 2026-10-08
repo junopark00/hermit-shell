@@ -176,17 +176,15 @@ namespace platf::clipboard {
   }
 
   status_e in_process::snapshot(std::uint32_t &seq, std::string &type) {
-    // Short retries only: this answers a request on the HTTPS io thread.
-    for (int attempt = 0; attempt < 5; ++attempt) {
-      if (OpenClipboard(nullptr)) {
-        seq = GetClipboardSequenceNumber();
-        type = current_type();
-        CloseClipboard();
-        return status_e::ok;
-      }
-      Sleep(10);
+    // The same retries as the other reads (about 0.3 s): programs that watch the clipboard hold it
+    // for a moment right after every copy, which is also when clients ask.
+    if (!open_with_retry()) {
+      return status_e::busy;
     }
-    return status_e::busy;
+    seq = GetClipboardSequenceNumber();
+    type = current_type();
+    CloseClipboard();
+    return status_e::ok;
   }
 
   namespace {
