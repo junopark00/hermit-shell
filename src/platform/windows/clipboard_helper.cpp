@@ -370,7 +370,8 @@ namespace platf::clipboard {
         }
       }
 
-      /// Logged once per reason: the request was done in this process and why.
+      /// Logged once per reason: the request was done in this process and why. Requests come from
+      /// the HTTPS thread and the file worker, so the last reason is kept under state.mutex.
       void note_fallback() {
         static std::string logged;
         std::string reason;
@@ -380,11 +381,12 @@ namespace platf::clipboard {
             return;
           }
           reason = state.status.state + (state.status.detail.empty() ? "" : ": " + state.status.detail);
-        }
-        if (reason != logged) {
+          if (reason == logged) {
+            return;
+          }
           logged = reason;
-          BOOST_LOG(info) << "Clipboard read in Shell's own process (clipboard helper " << reason << ")";
         }
+        BOOST_LOG(info) << "Clipboard read in Shell's own process (clipboard helper " << reason << ")";
       }
 
       /// Ends the helper: the pipe is disconnected first so it exits on its own, then it is killed

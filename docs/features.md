@@ -239,7 +239,7 @@ The upstream `/actions/clipboard` endpoint carries text only. On Windows Shell a
   read of the same file is stalled (see below). An empty 200
   reply (`type=text`, `type=image`, `type=files`, `type=filelist`) means only that the clipboard
   holds nothing of that type. `GET type=text` answers 500 (plain text) when the clipboard lists text
-  that cannot be read; real text is a 200 with the text.
+  that cannot be read and 413 when the text is over 64 MB; real text is a 200 with the text.
 - Every 422 body starts with a machine-readable reason on a line of its own, then a line of text
   for people. Clients branch on the first line:
 

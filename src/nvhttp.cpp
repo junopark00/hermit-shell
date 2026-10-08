@@ -2613,12 +2613,18 @@ namespace nvhttp {
       return;
     }
 
-    // Busy (503) and unreadable (500) are told apart from an empty clipboard (empty 200), which is
-    // all stock clients get when there is no text.
+    // Busy (503), over the helper's limit (413) and unreadable (500) are told apart from an empty
+    // clipboard (empty 200), which is all stock clients get when there is no text.
     std::string content;
     auto status = platf::clipboard::get_text(content);
     if (status == platf::clipboard::status_e::busy) {
       refuse_clipboard_busy(response, named_cert_p->name, "text read"sv);
+      return;
+    }
+    if (status == platf::clipboard::status_e::too_large) {
+      BOOST_LOG(info) << "Clipboard text not sent to [" << named_cert_p->name << "]: it is too large";
+      response->write(SimpleWeb::StatusCode::client_error_payload_too_large, "the clipboard text is too large"sv);
+      response->close_connection_after_response = true;
       return;
     }
     if (status == platf::clipboard::status_e::failed) {
