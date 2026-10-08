@@ -43,6 +43,7 @@
 #include "uuid.h"
 
 #ifdef _WIN32
+  #include "platform/windows/clipboard.h"
   #include "platform/windows/utils.h"
 #endif
 
@@ -1250,6 +1251,14 @@ namespace confighttp {
       output_tree["sessions"] = std::move(sessions);
   #ifdef _WIN32
       output_tree["vdisplay"] = proc::virtual_display_status();
+      // Shell: the clipboard helper (tools\shellclip.exe) that reads the clipboard as the user
+      auto helper = platf::clipboard::helper_status();
+      output_tree["clipboard_helper"] = {
+        {"state", helper.state},
+        {"detail", helper.detail},
+        {"pid", helper.pid},
+        {"restarts", helper.restarts},
+      };
   #endif
       send_response(response, output_tree);
     } catch (std::exception &e) {

@@ -123,6 +123,19 @@
       </div>
     </div>
 
+    <!-- Clipboard helper (Windows hosts running as a service) -->
+    <div class="shell-panel" v-if="clipboardHelper && clipboardHelper.state !== 'not-needed'">
+      <div class="shell-panel-head">
+        <h3 class="mb-0">{{ $t('shell_dashboard.clipboard') }}</h3>
+      </div>
+      <div>
+        <span class="shell-status" :class="clipboardHelperClass"></span>
+        {{ clipboardHelperText }}
+        <span class="shell-num shell-helper ms-1" v-if="clipboardHelper.state === 'running' && clipboardHelper.pid">PID {{ clipboardHelper.pid }}</span>
+      </div>
+      <div class="shell-helper mt-1">{{ clipboardHelperDesc }}</div>
+    </div>
+
     <!-- Paired devices -->
     <div class="shell-panel">
       <div class="shell-panel-head">
@@ -352,6 +365,9 @@ export default {
       vdisplay: null,
       releasingVd: false,
       vdisplayError: false,
+      // /api/shell/live "clipboard_helper" (Windows hosts): the process that reads the clipboard
+      // as the signed-in user; null on older hosts
+      clipboardHelper: null,
     };
   },
   computed: {
@@ -412,6 +428,31 @@ export default {
       }
       parts.push(this.$t(vd.auto_release ? 'shell_dashboard.vdisplay_auto_on' : 'shell_dashboard.vdisplay_auto_off'));
       return parts.join(' \u00b7 ');
+    },
+    clipboardHelperClass() {
+      const state = this.clipboardHelper ? this.clipboardHelper.state : '';
+      if (state === 'running') {
+        return 'shell-status-ok';
+      }
+      return state === 'failed' ? 'shell-status-warn' : 'shell-status-off';
+    },
+    clipboardHelperText() {
+      const state = this.clipboardHelper ? this.clipboardHelper.state : '';
+      const known = ['running', 'starting', 'no-user', 'failed', 'stopped'];
+      return this.$t('shell_dashboard.clipboard_' + (known.includes(state) ? state.replace('-', '_') : 'stopped'));
+    },
+    clipboardHelperDesc() {
+      const h = this.clipboardHelper;
+      if (!h) {
+        return '';
+      }
+      if (h.state === 'running') {
+        return h.restarts > 0
+          ? this.$t('shell_dashboard.clipboard_running_desc_restarted', { n: h.restarts })
+          : this.$t('shell_dashboard.clipboard_running_desc');
+      }
+      const why = h.detail ? ' (' + h.detail + ')' : '';
+      return this.$t('shell_dashboard.clipboard_fallback_desc') + why;
     },
   },
   mounted() {
@@ -545,6 +586,7 @@ export default {
         const before = this.live ? this.live.map(s => this.liveKey(s)).sort().join('|') : null;
         this.live = body.sessions.filter(s => s && typeof s === 'object');
         this.vdisplay = body.vdisplay && typeof body.vdisplay === 'object' ? body.vdisplay : null;
+        this.clipboardHelper = body.clipboard_helper && typeof body.clipboard_helper === 'object' ? body.clipboard_helper : null;
         this.liveError = false;
         this.trackRecovery();
         // A stream started or ended (also a quick reconnect of the same device): the device list
