@@ -25,6 +25,7 @@
 #include "video.h"
 
 #ifdef _WIN32
+  #include "platform/windows/clipboard_helper.h"
   #include "platform/windows/misc.h"
   #include "platform/windows/virtual_display.h"
 #endif
@@ -363,6 +364,12 @@ int run_main(int argc, char *argv[]) {
   if (!platf_deinit_guard) {
     BOOST_LOG(error) << "Platform failed to initialize"sv;
   }
+
+#ifdef _WIN32
+  // Shell: the clipboard helper runs as the signed-in user while Shell runs as SYSTEM (see
+  // platform/windows/clipboard_helper.h); stopped when this guard goes out of scope.
+  auto clipboard_helper_guard = platf::clipboard::helper::start();
+#endif
 
   auto proc_deinit_guard = proc::init();
   if (!proc_deinit_guard) {

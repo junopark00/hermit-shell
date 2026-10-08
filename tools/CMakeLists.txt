@@ -28,3 +28,18 @@ target_link_libraries(shellsvc
         wtsapi32
         ${PLATFORM_LIBRARIES})
 target_compile_options(shellsvc PRIVATE ${SHELL_COMPILE_OPTIONS})
+
+# Shell: the clipboard helper shell.exe runs as the signed-in user (no console window)
+add_executable(shellclip WIN32
+        shellclip.cpp
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/clipboard_access.cpp")
+set_target_properties(shellclip PROPERTIES CXX_STANDARD 23)
+target_link_libraries(shellclip
+        ${CMAKE_THREAD_LIBS_INIT}
+        ole32
+        shell32
+        user32
+        uuid
+        windowscodecs
+        ${PLATFORM_LIBRARIES})
+target_compile_options(shellclip PRIVATE ${SHELL_COMPILE_OPTIONS})

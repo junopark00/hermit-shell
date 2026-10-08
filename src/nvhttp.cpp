@@ -1770,6 +1770,15 @@ namespace nvhttp {
     response->close_connection_after_response = true;
   }
 
+  /// Shell: the clipboard helper found more top-level copied items than one transfer may hold
+  /// (max_file_entries), which list_paths would refuse as "too many files" anyway: the same 413.
+  void refuse_too_many_copied_items(const resp_https_t &response, const std::string &client) {
+    const std::string error = "too many files";
+    BOOST_LOG(info) << "Clipboard files not sent to [" << client << "]: " << error;
+    response->write(file_error_status(error), file_error_body(error));
+    response->close_connection_after_response = true;
+  }
+
   /// Status for an archive decode_archive rejected (POST type=files): 413 limits, 422 content,
   /// 400 everything else, which is a malformed archive rather than a host failure.
   SimpleWeb::StatusCode archive_error_status(const std::string &error) {
@@ -2524,8 +2533,13 @@ namespace nvhttp {
       // when the client asks for them (type=filedata).
       auto seq = platf::clipboard::sequence();
       std::vector<std::filesystem::path> roots;
-      if (platf::clipboard::get_file_drop_list(roots) == platf::clipboard::status_e::busy) {
+      auto drop_status = platf::clipboard::get_file_drop_list(roots);
+      if (drop_status == platf::clipboard::status_e::busy) {
         refuse_clipboard_busy(response, named_cert_p->name, "file list"sv);
+        return;
+      }
+      if (drop_status == platf::clipboard::status_e::too_large) {
+        refuse_too_many_copied_items(response, named_cert_p->name);
         return;
       }
       if (roots.empty()) {
@@ -2562,8 +2576,13 @@ namespace nvhttp {
     }
     if (clipboard_type == "files"sv) {
       std::vector<std::filesystem::path> roots;
-      if (platf::clipboard::get_file_drop_list(roots) == platf::clipboard::status_e::busy) {
+      auto drop_status = platf::clipboard::get_file_drop_list(roots);
+      if (drop_status == platf::clipboard::status_e::busy) {
         refuse_clipboard_busy(response, named_cert_p->name, "files"sv);
+        return;
+      }
+      if (drop_status == platf::clipboard::status_e::too_large) {
+        refuse_too_many_copied_items(response, named_cert_p->name);
         return;
       }
       if (roots.empty()) {

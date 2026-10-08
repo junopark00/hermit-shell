@@ -1,12 +1,15 @@
-// Standalone checks for src/platform/windows/clipboard.cpp: DIB <-> PNG conversion, the APCF file
-// archive (encode, decode, validation, extraction, packing a folder tree) and the 422 reasons.
-// Uses synthetic data and a temporary folder only; never touches the real clipboard (set_image_png
-// is only given data it refuses before opening the clipboard).
+// Standalone checks for src/platform/windows/clipboard.cpp and clipboard_access.cpp: DIB <-> PNG
+// conversion, the APCF file archive (encode, decode, validation, extraction, packing a folder
+// tree), the 422 reasons and the framing of the clipboard helper protocol (clipboard_protocol.h).
+// Uses synthetic data and a temporary folder only; never touches the real clipboard
+// (in_process::set_image_png is only given data it refuses before opening the clipboard).
 //
 // Build and run from the repository root in MSYS2 UCRT64 (one line):
-//   g++ -std=c++20 -O1 -iquote src shell/tests/clipboard_image_test.cpp src/platform/windows/clipboard.cpp -lwindowscodecs -lole32 -luuid -luserenv -lshell32 -o build/clipboard_image_test.exe
+//   g++ -std=c++20 -O1 -iquote src shell/tests/clipboard_image_test.cpp src/platform/windows/clipboard.cpp src/platform/windows/clipboard_access.cpp -lwindowscodecs -lole32 -luuid -luserenv -lshell32 -o build/clipboard_image_test.exe
 //   build/clipboard_image_test.exe
 #include "platform/windows/clipboard.h"
+#include "platform/windows/clipboard_access.h"
+#include "platform/windows/clipboard_protocol.h"
 
 #include <Windows.h>
 
@@ -21,6 +24,7 @@
 #include <vector>
 
 namespace cb = platf::clipboard;
+namespace proto = platf::clipboard::protocol;
 
 static int g_pass = 0;
 static int g_fail = 0;
@@ -166,8 +170,8 @@ int main() {
   }
   check("PNG over the size limit", cb::png_to_dibv5(std::string(cb::max_image_bytes + 1, 'x')).empty());
   // Refused before the clipboard is opened, so the real clipboard is left alone
-  check("writing non-PNG data is not convertible", cb::set_image_png("definitely not a png") == cb::status_e::not_convertible);
-  check("writing nothing is not convertible", cb::set_image_png("") == cb::status_e::not_convertible);
+  check("writing non-PNG data is not convertible", cb::in_process::set_image_png("definitely not a png") == cb::status_e::not_convertible);
+  check("writing nothing is not convertible", cb::in_process::set_image_png("") == cb::status_e::not_convertible);
   {
     std::uint32_t width = 0, height = 0;
     std::string png = cb::dib_to_png(make_dib(3, 2, 24, pixels));
@@ -331,6 +335,94 @@ int main() {
     std::string error;
     std::string packed;
     check("packing nothing fails", !cb::archive_paths({}, packed, error));
+  }
+
+  std::printf("Helper protocol framing\n");
+  {
+    // One frame, decoded whole and byte by byte
+    std::string frame;
+    proto::encode_frame(frame, static_cast<std::uint8_t>(proto::op_e::set_text), "hello");
+    check("frame is header plus payload", frame.size() == proto::header_size + 5);
+    std::uint8_t code = 0;
+    std::string_view payload;
+    std::size_t consumed = 0;
+    check("frame decodes", proto::decode_frame(frame, proto::max_text_payload, code, payload, consumed) == proto::decode_e::ok &&
+                             code == static_cast<std::uint8_t>(proto::op_e::set_text) && payload == "hello" && consumed == frame.size());
+    bool incomplete = true;
+    for (std::size_t n = 0; n < frame.size(); ++n) {
+      incomplete = incomplete && proto::decode_frame(frame.substr(0, n), proto::max_text_payload, code, payload, consumed) == proto::decode_e::incomplete;
+    }
+    check("every shorter prefix is incomplete", incomplete);
+    check("a frame over the limit is too large", proto::decode_frame(frame, 4, code, payload, consumed) == proto::decode_e::too_large);
+    check("a limit of exactly the payload is fine", proto::decode_frame(frame, 5, code, payload, consumed) == proto::decode_e::ok);
+
+    // Two frames back to back: the first is taken, the rest is left
+    std::string two = frame;
+    proto::encode_frame(two, static_cast<std::uint8_t>(proto::reply_e::ok), "");
+    check("first of two frames", proto::decode_frame(two, proto::max_text_payload, code, payload, consumed) == proto::decode_e::ok && consumed == frame.size());
+    check("second, empty frame", proto::decode_frame(std::string_view(two).substr(consumed), 0, code, payload, consumed) == proto::decode_e::ok &&
+                                   code == static_cast<std::uint8_t>(proto::reply_e::ok) && payload.empty() && consumed == proto::header_size);
+
+    // Header alone, and the length field as a little-endian u32
+    std::uint32_t length = 0;
+    std::string header = proto::encode_header(7, 0x01020304);
+    check("header decodes little-endian", proto::decode_header(header, code, length) && code == 7 && length == 0x01020304 &&
+                                            static_cast<std::uint8_t>(header[1]) == 4 && static_cast<std::uint8_t>(header[4]) == 1);
+    check("short header does not decode", !proto::decode_header(header.substr(0, 4), code, length));
+
+    // Codes and limits
+    check("ops are 1..8", !proto::is_op(0) && proto::is_op(1) && proto::is_op(8) && !proto::is_op(9));
+    check("replies are 0..6", proto::is_reply(0) && proto::is_reply(6) && !proto::is_reply(7));
+    check("requests without a payload take none", proto::max_request_payload(proto::op_e::get_text) == 0 && proto::max_request_payload(proto::op_e::snapshot) == 0);
+    check("image limit matches the clipboard limit", proto::max_reply_payload(proto::op_e::get_image) == cb::max_image_bytes &&
+                                                       proto::max_request_payload(proto::op_e::set_image) == cb::max_image_bytes);
+    check("statuses map onto replies and back", cb::to_reply(cb::status_e::busy) == proto::reply_e::busy && cb::to_status(proto::reply_e::too_large) == cb::status_e::too_large &&
+                                                  cb::to_status(proto::reply_e::bad_request) == cb::status_e::failed);
+  }
+
+  std::printf("Helper protocol payloads\n");
+  {
+    std::uint32_t seq = 0;
+    std::string type;
+    check("snapshot round trip", proto::decode_snapshot(proto::encode_snapshot(123456789, "files"), seq, type) && seq == 123456789 && type == "files");
+    check("snapshot with an unknown type is refused", !proto::decode_snapshot(proto::encode_snapshot(1, "audio"), seq, type));
+    check("snapshot shorter than its number is refused", !proto::decode_snapshot("abc", seq, type));
+    check("snapshot over its limit is refused", !proto::decode_snapshot(proto::encode_snapshot(1, std::string(20, 'x')), seq, type));
+
+    std::vector<std::string> paths = {"C:\\Users\\me\\Documents\\report.pdf", "D:\\사진\\휴가 2026", "\\\\server\\share\\a b.txt"};
+    std::string encoded = proto::encode_paths(paths);
+    std::vector<std::string> decoded;
+    check("path list round trip", !encoded.empty() && proto::decode_paths(encoded, decoded) && decoded == paths);
+    check("empty list cannot be encoded", proto::encode_paths({}).empty());
+    check("empty path cannot be encoded", proto::encode_paths({"C:\\a", ""}).empty());
+    check("path with a NUL cannot be encoded", proto::encode_paths({std::string("C:\\a\\b\0c", 8)}).empty());
+    std::vector<std::string> many(proto::max_path_entries, "C:\\x");
+    check("the entry limit is encodable", !proto::encode_paths(many).empty());
+    many.push_back("C:\\y");
+    check("one over the entry limit is not", proto::encode_paths(many).empty());
+
+    bool truncated_refused = true;
+    for (std::size_t n = 0; n < encoded.size(); ++n) {
+      truncated_refused = truncated_refused && !proto::decode_paths(encoded.substr(0, n), decoded) && decoded.empty();
+    }
+    check("every truncated path list is refused", truncated_refused);
+    check("trailing bytes are refused", !proto::decode_paths(encoded + "x", decoded));
+    std::string zero_count;
+    proto::put_u32(zero_count, 0);
+    check("a count of zero is refused", !proto::decode_paths(zero_count, decoded));
+    std::string huge_count;
+    proto::put_u32(huge_count, 0xFFFFFFFFu);
+    check("a huge count is refused before reading", !proto::decode_paths(huge_count, decoded));
+    std::string zero_length;
+    proto::put_u32(zero_length, 1);
+    proto::put_u32(zero_length, 0);
+    check("an empty path is refused", !proto::decode_paths(zero_length, decoded));
+    std::string nul_path;
+    proto::put_u32(nul_path, 1);
+    proto::put_u32(nul_path, 3);
+    nul_path += std::string("a\0b", 3);
+    check("a path with a NUL is refused", !proto::decode_paths(nul_path, decoded));
+    check("a list over the payload limit is refused", !proto::decode_paths(std::string(proto::max_paths_payload + 1, 'x'), decoded));
   }
 
   std::printf("Links and other reparse points\n");

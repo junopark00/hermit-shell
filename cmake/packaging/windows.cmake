@@ -29,6 +29,7 @@ install(TARGETS audio-info RUNTIME DESTINATION "tools" COMPONENT audio)
 
 # Mandatory tools
 install(TARGETS shellsvc RUNTIME DESTINATION "tools" COMPONENT application)
+install(TARGETS shellclip RUNTIME DESTINATION "tools" COMPONENT application)
 
 # Drivers
 install(DIRECTORY "${SHELL_SOURCE_ASSETS_DIR}/windows/drivers/sudovda"

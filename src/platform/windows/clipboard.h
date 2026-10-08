@@ -1,6 +1,13 @@
 /**
  * @file src/platform/windows/clipboard.h
  * @brief Rich clipboard access (sequence number, content type, PNG images) for clipboard sync.
+ *
+ * Shell: the clipboard reads and writes (snapshot, describe_for_log, get_/set_text, get_/set_image_png,
+ * get_/set_file_drop_list) are implemented in clipboard_access.cpp and defined here by
+ * clipboard_helper.cpp: when Shell runs as SYSTEM they go through the clipboard helper
+ * (tools\shellclip.exe, started as the signed-in user, see helper_status), since SYSTEM does not see
+ * a copy made in File Explorer; without the helper they run in this process. The conversions and
+ * everything that reads or writes files (clipboard.cpp) run in this process.
  */
 #pragma once
 
@@ -67,11 +74,24 @@ namespace platf::clipboard {
   status_e snapshot(std::uint32_t &seq, std::string &type);
 
   /**
-   * @brief Shell: what this process sees on the clipboard, for the log when the type is "none":
-   * the formats listed, the clipboard owner's process id, and the window station and desktop of
-   * the calling thread.
+   * @brief Shell: what is seen on the clipboard, for the log when the type is "none": whether the
+   * helper or this process answered, the formats listed, the clipboard owner's process id, and
+   * the window station and desktop of the reading thread.
    */
   std::string describe_for_log();
+
+  /// Shell: the state of the clipboard helper (tools\shellclip.exe), for the dashboard and the log.
+  struct helper_status_t {
+    /// "running", "starting" (launch pending or being retried), "no-user" (nobody is signed in at
+    /// the console), "failed" (see detail), "not-needed" (Shell does not run as SYSTEM, so it sees
+    /// the clipboard itself) or "stopped".
+    std::string state;
+    std::string detail;  ///< why it is not running, in English, for the log; empty when running
+    std::uint32_t pid = 0;  ///< the helper's process id while running
+    std::uint32_t restarts = 0;  ///< launches after the first since Shell started
+  };
+
+  helper_status_t helper_status();
 
   /**
    * @brief Clipboard text (CF_UNICODETEXT) as UTF-8.
