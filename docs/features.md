@@ -8,6 +8,7 @@ behaves and which client endpoints it uses.
 | Item | Value |
 |---|---|
 | Service | `ShellService` (`tools\shellsvc.exe` runs `shell.exe` in the signed-in user's session) |
+| Clipboard helper | `tools\shellclip.exe`, run by `shell.exe` as the signed-in user (see [Clipboard](#clipboard)) |
 | Install folder | `C:\Program Files\Shell` |
 | Settings, pairing, apps, log | `config\shell.conf`, `config\shell_state.json`, `config\apps.json`, `config\shell.log` |
 | Session history | `config\session_history.jsonl` |
@@ -205,6 +206,24 @@ The upstream `/actions/clipboard` endpoint carries text only. On Windows Shell a
   entries), 422 when a path in it cannot be created as it is (`unsupported-name` for a path Windows
   does not allow, `duplicate-name` for two paths that differ only in case or a file also used as a
   folder) and 400 for a malformed archive, including one with no entries.
+- **Clipboard helper.** Shell runs as SYSTEM (started by the service in the user's session) and
+  then does not see a copy made in File Explorer: Windows lists only OLE's "DataObject" format to
+  it, so the copied files looked like `type=none`. Like Remote Desktop with `rdpclip.exe`, Shell
+  therefore starts `tools\shellclip.exe` as the signed-in user, with the user's own token (never
+  elevated), no window and no console, and every clipboard read and write goes through it: it
+  answers requests from one pipe it inherits as its standard input and output and does nothing else
+  (it opens nothing by name and never runs or opens the paths it carries). The pipe has a random
+  name, allows SYSTEM and Administrators only, takes one client, and that client end is opened by
+  Shell before the helper starts. Each request has a deadline (4 s, 12 s for images); a helper that
+  does not answer in time is restarted and the client gets 503 `clipboard-busy`. The helper is
+  started again when it exits (after 1 s, doubling up to 30 s), stopped and started again when the
+  console session changes, and stopped when Shell stops; it also exits by itself when Shell is gone.
+  While it is not running (nobody signed in, the file missing, a start failure), Shell reads the
+  clipboard itself as before: text and images work, files copied in File Explorer are not seen.
+  The dashboard shows the helper's state (**Clipboard helper**), the log says when it starts, stops
+  or fails and, once per reason, when Shell falls back to reading the clipboard itself; the
+  `type=none` diagnostics line says whether the helper or Shell answered. Shell started by hand
+  (not as a service) needs no helper and does not start one.
 - Received files are checked first (paths, duplicates, size), then extracted with the signed-in user's
   rights to `%LOCALAPPDATA%\Temp\ShellClipboard` and placed on the clipboard as CF_HDROP ("copy").
   Files that are sent are read with the user's rights; symbolic links and junctions are not

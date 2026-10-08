@@ -225,6 +225,11 @@ and, when they are not installed, the Boost and nlohmann/json sources.
   -RemoveDriver` removes it again.
 - **Remote shutdown and restart** need the app launch permission of the device. Grant it only to devices
   you own.
+- **Clipboard helper**: `shell.exe` runs as SYSTEM and starts `tools\shellclip.exe` as the signed-in
+  user (with the user's own, never elevated, token) to read and write the clipboard on its behalf,
+  since SYSTEM does not see files copied in File Explorer. The helper only answers requests on the
+  pipe it inherits from `shell.exe`, never opens or runs the paths it carries, and exits when
+  `shell.exe` is gone. See [docs/features.md](docs/features.md#clipboard).
 - **Ctrl+Alt+Del**: the installer sets the `SoftwareSASGeneration` policy so that services may send the
   secure attention sequence. Uninstalling leaves the policy in place; remove it under
   `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System` if you no longer need it.
