@@ -2483,7 +2483,7 @@ namespace nvhttp {
         response->close_connection_after_response = true;
         return;
       }
-      if (type == "none"sv) {
+      if (type == "other"sv) {
         // Shell: diagnostics for clipboard content no type matched (once per change number)
         static std::atomic<std::uint32_t> described_seq {0};
         if (described_seq.exchange(seq) != seq) {

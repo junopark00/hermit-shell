@@ -241,6 +241,11 @@ namespace platf::clipboard {
     if (IsClipboardFormatAvailable(CF_HDROP)) {
       return "files";
     }
+    // Content in formats Shell does not sync (a program's own, RTF or HTML only) is a change all
+    // the same: clients must not replace it with an older copy of theirs. An empty clipboard is not.
+    if (CountClipboardFormats() > 0) {
+      return "other";
+    }
     return "none";
   }
 

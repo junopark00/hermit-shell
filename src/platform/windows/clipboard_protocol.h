@@ -195,7 +195,7 @@ namespace platf::clipboard::protocol {
     }
     seq = get_u32(payload, 0);
     type.assign(payload.data() + 4, payload.size() - 4);
-    return type == "text" || type == "image" || type == "files" || type == "none";
+    return type == "text" || type == "image" || type == "files" || type == "other" || type == "none";
   }
 
   /// Encodes up to max_path_entries paths; empty when there are more, or a path is empty or

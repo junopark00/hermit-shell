@@ -189,13 +189,17 @@ The upstream `/actions/clipboard` endpoint carries text only. On Windows Shell a
 
 | Request | Content | Permission |
 |---|---|---|
-| `GET type=info` | `seq=<change number>`, `type=<text\|image\|files\|none>`, `files=stream` | Clipboard read |
+| `GET type=info` | `seq=<change number>`, `type=<text\|image\|files\|other\|none>`, `files=stream` | Clipboard read |
 | `GET`/`POST type=image` | PNG; reads the "PNG" format or converts CF_DIB, writes both "PNG" and CF_DIBV5 | Clipboard read / write |
 | `GET`/`POST type=files` | An "APCF" archive (up to 256 MB and 1,000 files) | Clipboard plus file download / upload |
 | `GET type=filelist` | The copied files and folders as a text list (up to 4 GB and 1,000 items), see below | Clipboard read plus file download |
 | `GET type=filedata&snapshot=<id>&index=<n>[&offset=<bytes>]` | The bytes of one file from that list | Clipboard read plus file download |
 
 - `POST` replies with the new change number (`seq=`), so a client does not read back what it wrote.
+- `type=other` means the clipboard holds content in formats Shell does not sync (a program's own
+  formats, RTF or HTML only): a change nothing can be fetched for, which clients do not replace with
+  an older copy of theirs. `type=none` means the clipboard is empty, which is not a change: a copy
+  waiting on the client is still sent. Shell 1.1.0 answered `none` for both.
 - `POST type=image` answers 413 when the PNG is over 32 MB or has more than 8192 × 8192 pixels
   (width × height, read from its header), 422 `image-not-convertible` when the data is not a PNG at
   all, and 500 when a PNG cannot be decoded or placed. `GET type=image` answers 413 when the
@@ -208,7 +212,7 @@ The upstream `/actions/clipboard` endpoint carries text only. On Windows Shell a
   folder) and 400 for a malformed archive, including one with no entries.
 - **Clipboard helper.** Shell runs as SYSTEM (started by the service in the user's session) and
   then does not see a copy made in File Explorer: Windows lists only OLE's "DataObject" format to
-  it, so the copied files looked like `type=none`. Like Remote Desktop with `rdpclip.exe`, Shell
+  it, so the copied files looked like `type=other`. Like Remote Desktop with `rdpclip.exe`, Shell
   therefore starts `tools\shellclip.exe` as the signed-in user, with the user's own token (never
   elevated), no window and no console, and every clipboard read and write goes through it: it
   answers requests from one pipe it inherits as its standard input and output and does nothing else
@@ -222,7 +226,7 @@ The upstream `/actions/clipboard` endpoint carries text only. On Windows Shell a
   clipboard itself as before: text and images work, files copied in File Explorer are not seen.
   The dashboard shows the helper's state (**Clipboard helper**), the log says when it starts, stops
   or fails and, once per reason, when Shell falls back to reading the clipboard itself; the
-  `type=none` diagnostics line says whether the helper or Shell answered. Shell started by hand
+  `type=other` diagnostics line says whether the helper or Shell answered. Shell started by hand
   (not as a service) needs no helper and does not start one.
 - Received files are checked first (paths, duplicates, size), then extracted with the signed-in user's
   rights to `%LOCALAPPDATA%\Temp\ShellClipboard` and placed on the clipboard as CF_HDROP ("copy").
