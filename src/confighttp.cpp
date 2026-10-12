@@ -154,17 +154,114 @@ namespace confighttp {
   }
 
   /**
+   * @brief Build the page a browser gets when its address is outside the allowed web UI origin.
+   * @param allowed The configured origin (`origin_web_ui_allowed`: pc or lan; wan refuses nothing).
+   * @param from The class of the requesting address (LAN or WAN, since PC is always allowed).
+   * @param path The requested page path, shown in the local URL for the host PC.
+   * @return A self-contained HTML document (inline CSS, no assets) in English with Korean under each line.
+   *
+   * Shell: Hermit's "Open Shell pairing page" button lands here when the host only accepts the web UI
+   * from the PC itself (1.1.0 test: a phone on the LAN got a bare 403). The page names the allowed
+   * scope and the request's class and says how to go on. The PIN and device name travel in the URL
+   * fragment, which never reaches the server, so nothing from the request is echoed except the
+   * resource path, which the route regexes limit to a few fixed forms.
+   */
+  std::string originRefusedPage(net::net_e allowed, net::net_e from, const std::string &path) {
+    auto escape = [](std::string text) {
+      boost::replace_all(text, "&", "&amp;");
+      boost::replace_all(text, "<", "&lt;");
+      boost::replace_all(text, ">", "&gt;");
+      boost::replace_all(text, "\"", "&quot;");
+      return text;
+    };
+    const std::string local_url = "https://localhost:" + std::to_string(net::map_port(PORT_HTTPS)) + escape(path);
+    const bool from_lan = from == net::LAN;
+    const char *scope_en = allowed == net::PC ? "this PC itself (Web UI Access: <code>pc</code>)" :
+                                                "this PC and its local network (Web UI Access: <code>lan</code>)";
+    const char *scope_ko = allowed == net::PC ? "이 PC 자체에서만 (웹 UI 접근 허용 범위: <code>pc</code>)" :
+                                                "이 PC와 로컬 네트워크에서만 (웹 UI 접근 허용 범위: <code>lan</code>)";
+    const char *from_en = from_lan ? "the local network" : "the internet (an address outside the local network)";
+    const char *from_ko = from_lan ? "로컬 네트워크에서" : "인터넷(로컬 네트워크 밖의 주소)에서";
+
+    // One English line with its Korean line underneath.
+    auto pair = [](const char *tag, const std::string &en, const std::string &ko) {
+      return "<" + std::string(tag) + ">" + en + "</" + tag + "><" + tag + " lang=\"ko\" class=\"ko\">" + ko + "</" + tag + ">\n";
+    };
+
+    std::string html =
+      "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
+      "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+      "<title>Access refused · Shell</title>\n"
+      "<style>\n"
+      ":root{color-scheme:light dark;--bg:#F4F4F4;--layer:#FFFFFF;--field:#F4F4F4;--border:#E0E0E0;--text:#161616;"
+      "--text2:#525252;--link:#005D5D;--accent:#007D79;--warning:#F1C21B;--header:#161616;--header-text:#F4F4F4}\n"
+      "@media (prefers-color-scheme:dark){:root{--bg:#161616;--layer:#262626;--field:#393939;--border:#393939;"
+      "--text:#F4F4F4;--text2:#C6C6C6;--link:#08BDBA}}\n"
+      "body{margin:0;background:var(--bg);color:var(--text);font:14px/1.43 \"IBM Plex Sans KR\",\"Malgun Gothic\",system-ui,sans-serif}\n"
+      "header{height:48px;display:flex;align-items:center;padding:0 16px;background:var(--header);color:var(--header-text);"
+      "border-bottom:1px solid #393939;font-weight:600;letter-spacing:.02em}\n"
+      "header span{color:#C6C6C6;font-weight:400;margin-left:8px}\n"
+      "main{max-width:44rem;margin:2em auto;padding:0 16px}\n"
+      ".card{background:var(--layer);border:1px solid var(--border);border-radius:4px;padding:24px}\n"
+      "h1{font-size:20px;line-height:28px;margin:0 0 4px}\nh2{font-size:16px;line-height:24px;margin:24px 0 4px}\n"
+      "p,li{margin:0}\n.ko{color:var(--text2);margin-bottom:12px}\nli.ko{list-style:none}\n"
+      "ol{padding-left:1.5em;margin:8px 0 0}\nol li{margin-top:4px}\n"
+      "code{font:13px ui-monospace,\"Cascadia Mono\",Consolas,monospace;background:var(--field);padding:1px 4px;border-radius:2px}\n"
+      "a{color:var(--link)}\n"
+      ".note{border-left:3px solid var(--warning);padding:8px 12px;margin-top:20px;background:var(--field)}\n.note p{margin:0}\n"
+      ".status{color:var(--text2);margin-top:16px;font-size:12px}\n"
+      "</style>\n</head>\n<body>\n<header>Shell<span>Web UI</span></header>\n<main>\n<div class=\"card\">\n";
+    html += pair("h1", "The web UI is not available from this device", "이 기기에서는 웹 UI를 열 수 없습니다");
+    html += pair("p",
+                 std::string("This PC accepts the web UI only from ") + scope_en + ". This request came from " + from_en + ", so it was refused.",
+                 std::string("이 PC는 ") + scope_ko + " 웹 UI 접속을 허용합니다. 이 요청은 " + from_ko + " 왔으므로 거부되었습니다.");
+    html += pair("h2", "How to continue", "계속하려면");
+    html += "<ol>\n";
+    html += pair("li",
+                 "Use the host PC itself: open <a href=\"" + local_url + "\"><code>" + local_url + "</code></a> in a browser on that PC. The pairing PIN is entered there.",
+                 "호스트 PC에서 직접 여세요. 그 PC의 브라우저에서 <code>" + local_url + "</code>을 열면 됩니다. 페어링 PIN도 거기서 입력합니다.");
+    if (from_lan) {
+      html += pair("li",
+                   "Or ask the owner of the PC to set <b>Settings &gt; Network &gt; Web UI Access</b> (<code>origin_web_ui_allowed</code>) to <code>lan</code> (this PC and the local network) and restart Shell.",
+                   "또는 PC 소유자에게 <b>설정 &gt; 네트워크 &gt; 웹 UI 접근 허용 범위</b>(<code>origin_web_ui_allowed</code>)를 <code>lan</code>(이 PC와 로컬 네트워크)으로 바꾸고 Shell을 다시 시작해 달라고 하세요.");
+    } else {
+      html += pair("li",
+                   "Or connect this device to the PC's local network first (a Tailscale connection counts as local) and open the page again. The web UI must then allow the local network: <b>Settings &gt; Network &gt; Web UI Access</b> (<code>origin_web_ui_allowed</code>) set to <code>lan</code>, followed by a restart of Shell.",
+                   "또는 이 기기를 먼저 PC의 로컬 네트워크에 연결하고(Tailscale 연결도 로컬로 취급됩니다) 페이지를 다시 여세요. 그때 웹 UI가 로컬 네트워크를 허용해야 합니다: <b>설정 &gt; 네트워크 &gt; 웹 UI 접근 허용 범위</b>(<code>origin_web_ui_allowed</code>)를 <code>lan</code>으로 바꾼 뒤 Shell 다시 시작.");
+    }
+    html += "</ol>\n<div class=\"note\">\n";
+    html += pair("p",
+                 "Allowing anyone (<code>wan</code>) is not recommended: the web UI controls the whole PC.",
+                 "누구나 접속 가능(<code>wan</code>)은 권장하지 않습니다. 웹 UI로 PC 전체를 제어할 수 있습니다.");
+    html += "</div>\n<p class=\"status\">HTTP 403 Forbidden</p>\n</div>\n</main>\n</body>\n</html>\n";
+    return html;
+  }
+
+  /**
    * @brief Check if the IP origin is allowed.
    * @param response The HTTP response object.
    * @param request The HTTP request object.
+   * @param htmlPage True for a page navigation (`/`, `/pin`, ...): a refusal then gets an explanatory
+   *                 HTML page instead of the bare 403 that API calls keep.
    * @return True if allowed, false otherwise.
    */
-  bool checkIPOrigin(resp_https_t response, req_https_t request) {
+  bool checkIPOrigin(resp_https_t response, req_https_t request, bool htmlPage = false) {
     auto address = net::addr_to_normalized_string(request->remote_endpoint().address());
     auto ip_type = net::from_address(address);
     if (ip_type > http::origin_web_ui_allowed) {
       BOOST_LOG(info) << "Web UI: ["sv << address << "] -- denied"sv;
-      response->write(SimpleWeb::StatusCode::client_error_forbidden);
+      if (!htmlPage) {
+        response->write(SimpleWeb::StatusCode::client_error_forbidden);
+        return false;
+      }
+      const SimpleWeb::CaseInsensitiveMultimap headers {
+        {"Content-Type", "text/html; charset=utf-8"},
+        {"Cache-Control", "no-store"},
+        {"X-Frame-Options", "DENY"},
+        {"Content-Security-Policy", "frame-ancestors 'none';"}
+      };
+      response->write(SimpleWeb::StatusCode::client_error_forbidden,
+                      originRefusedPage(http::origin_web_ui_allowed, ip_type, request->path), headers);
       return false;
     }
     return true;
@@ -180,7 +277,8 @@ namespace confighttp {
    * This function uses session cookies (if set) and ensures they have not expired.
    */
   bool authenticate(resp_https_t response, req_https_t request, bool needsRedirect = false) {
-    if (!checkIPOrigin(response, request))
+    // Page handlers ask for a redirect; the same requests get the HTML refusal page.
+    if (!checkIPOrigin(response, request, needsRedirect))
       return false;
     // If credentials not set, redirect to welcome.
     if (config::shell.username.empty()) {
@@ -419,7 +517,7 @@ namespace confighttp {
    * @todo Combine this function with getWelcomePage if appropriate.
    */
   void getLoginPage(resp_https_t response, req_https_t request) {
-    if (!checkIPOrigin(response, request)) {
+    if (!checkIPOrigin(response, request, true)) {
       return;
     }
 

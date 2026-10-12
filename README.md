@@ -102,7 +102,9 @@ Apollo is disabled, not deleted; see [docs/tools.md](docs/tools.md#migrating-fro
 
 The permissions of a paired device can be changed at any time under **Device Management** on the same
 page. Hermit and Hermit for Android open the Pairing page with the PIN and device name already filled
-in; you only check the permissions and press **Pair**.
+in; you only check the permissions and press **Pair**. If the browser shows **The web UI is not available
+from this device** instead, the host accepts the web UI from the PC itself only (**Settings > Network >
+Web UI Access**); the page says how to continue.
 
 ## Remote access
 

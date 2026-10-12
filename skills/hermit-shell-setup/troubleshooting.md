@@ -52,7 +52,7 @@ Get-NetTCPConnection -State Listen -LocalPort 47984,47989,47990,48010 -ErrorActi
 |---|---|---|
 | Web UI does not open at `https://localhost:47990` | Service not running; or the browser stopped at the certificate warning | Check the service; continue past the warning (self-signed certificate) |
 | Web UI forgotten password | | See "Forgotten web UI password" below |
-| Web UI "403" / refused from another device | **Web UI Access** allows the local network only (default), and the device is not on it | Open it on the host, on the home network, or over Tailscale. Do not set it to "Anyone" |
+| Web UI "The web UI is not available from this device" (403) from another device | **Web UI Access** allows this PC only, or the local network only (default), and the device is outside that range; the page names the range and where the request came from | Open it on the host, on the home network, or over Tailscale; or set **Web UI Access** to the local network. Do not set it to "Anyone" |
 | Host does not appear in Hermit | mDNS blocked (guest Wi-Fi, client isolation, VPN, different subnet); or **Settings > General > Enable Auto Discovery** turned off | Add the host by IP address (**+**) |
 | "Unable to connect" / host shows offline | Host asleep or off; service stopped; firewall; wrong address | Wake the PC, check the basics, check the address; from outside, see [remote-access.md](remote-access.md) |
 | "No video received from host" | UDP ports blocked (firewall, router forwarding, a network that blocks UDP) | Check the firewall rule; for remote use check forwarding or use Tailscale |

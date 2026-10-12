@@ -41,6 +41,13 @@ file that still uses the Sunshine key `sunshine_name` is read as well.
   0 green, 1 to 3 yellow, more red.
 - **Theme**: neutral grey layers with one teal accent, in light and dark. Fonts (IBM Plex Sans) are served
   by the host, so the UI works without internet access.
+- **Access**: **Settings > Network > Web UI Access** (`origin_web_ui_allowed`: `pc`, `lan` (default) or
+  `wan`) decides which addresses may open the web UI; the check runs before the sign-in. A browser that
+  opens a page (`/`, `/pin`, ...) from outside that range, for example a phone on the local network while
+  the setting is `pc` (what Hermit's **Open Shell pairing page** runs into), gets a 403 page in English and
+  Korean that names the allowed scope and where the request came from, gives the local URL to use on the
+  host PC itself and the setting to change, and advises against `wan`. The page is built into the server
+  (no web UI assets), and `/api/...` requests from outside the range get a bare 403 as before.
 
 ## Pairing
 
