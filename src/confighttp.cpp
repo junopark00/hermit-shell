@@ -2091,6 +2091,11 @@ namespace confighttp {
       if (!boost::iequals(username, config::shell.username) || hash != config::shell.password)
         return;
       std::string sessionCookieRaw = crypto::rand_alphabet(64);
+      if (sessionCookieRaw.empty()) {
+        // No random bytes: no session rather than a guessable one
+        BOOST_LOG(error) << "Login refused: no random bytes for the session cookie";
+        return;
+      }
       sessionCookie = util::hex(crypto::hash(sessionCookieRaw + config::shell.salt)).to_string();
       cookie_creation_time = std::chrono::steady_clock::now();
       const SimpleWeb::CaseInsensitiveMultimap headers {

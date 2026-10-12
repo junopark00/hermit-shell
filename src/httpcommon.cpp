@@ -82,6 +82,10 @@ namespace http {
     }
 
     auto salt = crypto::rand_alphabet(16);
+    if (salt.empty()) {
+      BOOST_LOG(error) << "Couldn't create the credentials: no random bytes for the salt"sv;
+      return -1;
+    }
     outputTree["username"] = username;
     outputTree["salt"] = salt;
     outputTree["password"] = util::hex(crypto::hash(password + salt)).to_string();
