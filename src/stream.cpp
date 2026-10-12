@@ -2478,10 +2478,6 @@ namespace stream {
       }
     }
 
-    bool local_cursor(const session_t &session) {
-      return session.cursor.requested.load(std::memory_order_relaxed);
-    }
-
     std::uint64_t alloc_order(const session_t &session) {
       return session.alloc_order;
     }

@@ -380,7 +380,7 @@ namespace video {
     safe::mail_t mail,
     config_t config,
     void *channel_data,
-    std::shared_ptr<encode_budget_t> encode_budget = nullptr  // Shell: encode time guard output (optional)
+    std::shared_ptr<encode_budget_t> encode_budget  // Shell: encode time guard output
   );
 
   bool validate_encoder(encoder_t &encoder, bool expect_failure);

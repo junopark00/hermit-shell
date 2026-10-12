@@ -103,11 +103,6 @@ namespace stream {
      *        (`host`, the default). Called from the HTTPS thread for a running session.
      */
     void set_local_cursor(session_t &session, bool local);
-
-    /**
-     * @brief Shell: whether the session asked for a local cursor.
-     */
-    bool local_cursor(const session_t &session);
   }  // namespace session
 
   // Shell: every finished session is appended as one JSON object per line to
