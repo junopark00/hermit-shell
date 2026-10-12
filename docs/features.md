@@ -103,8 +103,9 @@ editor.
   `/unpair` from the device that started the pairing, so nothing changes for them.
 - **Pairing limit per address**: a client address gets `pair_rate_limit_count` pairing attempts per
   `pair_rate_limit_seconds` (defaults 10 per 60 seconds; the window starts with the address's first
-  attempt). The start of a pairing (`/pair` getservercert) and each `/unpair` count as one attempt,
-  so a pairing that a device cancels, or fails with a wrong PIN, counts twice. Over the limit,
+  attempt). The start of a pairing (`/pair` getservercert) counts as one attempt; cancelling it
+  with `/unpair` does not, so a pairing that a device cancels or fails with a wrong PIN costs one
+  attempt. Over the limit,
   `/pair` and `/unpair` answer `status_code` 400 ("Too many pairing attempts; try again later"), the
   shape of a failed pairing, so clients show their usual pairing failure and no attempt is kept; a
   later phase of a pairing already under way is failed the same way; and a pairing that is waiting

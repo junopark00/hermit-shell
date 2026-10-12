@@ -176,9 +176,9 @@ namespace nvhttp {
   /**
    * @brief Shell: whether `address` has used up its pairing attempts (config pair_rate_limit_count
    * per pair_rate_limit_seconds; 0 turns the limit off). The window starts with the first attempt
-   * and entries whose window ended are dropped whenever the table is touched. The unauthenticated
-   * entry points count an attempt (`/pair` getservercert and `/unpair`); the later pairing phases
-   * and pin() only check. The first refusal of an address in a window is logged.
+   * and entries whose window ended are dropped whenever the table is touched. The start of a
+   * pairing (`/pair` getservercert) counts an attempt; the later pairing phases, `/unpair` and
+   * pin() only check. The first refusal of an address in a window is logged.
    * @param address The client address, as net::addr_to_normalized_string gives it.
    * @param count Whether this request is an attempt of its own.
    * @return true when the address is over the limit and the request must be refused.
@@ -990,8 +990,9 @@ namespace nvhttp {
    * lets the client report the wrong PIN. Paired devices are removed in the web UI only, so without
    * an unfinished pairing the reply is 400, and the client does not take the device for unpaired.
    * Only the address that started the pairing may cancel it; from any other address the reply is
-   * the 400 of "nothing pending", which does not tell whether an attempt exists. Each request
-   * counts as a pairing attempt of its address (pair_rate_limited).
+   * the 400 of "nothing pending", which does not tell whether an attempt exists. An address over
+   * its pairing limit is refused here too, but cancelling does not count as an attempt, so a
+   * cancelled or failed pairing costs one attempt, not two (pair_rate_limited).
    */
   void unpair(resp_http_t response, req_http_t request) {
     print_req<SimpleWeb::HTTP>(request);
@@ -1015,7 +1016,7 @@ namespace nvhttp {
     }
 
     auto client_address = net::addr_to_normalized_string(request->remote_endpoint().address());
-    if (pair_rate_limited(client_address, true)) {
+    if (pair_rate_limited(client_address, false)) {
       tree.put("root.<xmlattr>.status_code", 400);
       tree.put("root.<xmlattr>.status_message", std::string {pair_rate_limited_message});
       return;
