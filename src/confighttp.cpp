@@ -1823,6 +1823,14 @@ namespace confighttp {
         case nvhttp::qr_create_e::no_cert:
           bad_request(response, request, "The server certificate fingerprint is not available");
           return;
+        case nvhttp::qr_create_e::no_random: {
+          // logged by qr_create; the random source is the host's problem, not the request's
+          nlohmann::json output_tree;
+          output_tree["status"] = false;
+          output_tree["error"] = "No random bytes for the token";
+          send_response_no_store(response, output_tree, SimpleWeb::StatusCode::server_error_internal_server_error);
+          return;
+        }
       }
     } catch (std::exception &e) {
       BOOST_LOG(warning) << "QR pairing: "sv << e.what();

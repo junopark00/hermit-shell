@@ -178,14 +178,16 @@ carries the attribute `qr_reason`; clients map the prefix to their own text:
 | 1 | No record, or another id | `none` | `QR_none: No QR pairing is pending; create one in the web UI` |
 | 2 | The client address is not local (`net::from_address` says WAN) | `network` | `QR_network: QR pairing is accepted from the local network only` |
 | 3 | More than 120 seconds since the code was created | `expired` | `QR_expired: QR code expired; create a new one` |
-| 4 | Already used, or in use from another address | `used` | `QR_used: QR code already used; create a new one` |
+| 4 | Already used, or in use by another device (another uniqueid or another address) | `used` | `QR_used: QR code already used; create a new one` |
 
 A wrong id and a WAN address learn nothing about the record (they are answered before its state is
 looked at). When the checks pass, the record becomes `in_use`, bound to the device's uniqueid and
 address, and the host answers getservercert at once with the token as the PIN: no PIN wait, no tray
 notification. The rest of the pairing (clientchallenge, serverchallengeresp, clientpairingsecret,
-the HTTPS `pairchallenge`) is unchanged; when it succeeds the device is stored with the record's
-permissions and the record becomes `used`. A pairing that fails (a damaged token, a dropped
+the HTTPS `pairchallenge`) is unchanged; when it succeeds the record becomes `used` and the device
+is stored with the record's permissions. One token admits exactly one client: a session whose record
+is no longer bound to it when it finishes (replaced, cancelled or expired meanwhile) is refused with
+`QR_used` and nothing is stored. A pairing that fails (a damaged token, a dropped
 connection, `/unpair` from the device) hands the record back as `pending`, so a retry within the 120
 seconds works. `enable_pairing = false` turns QR pairing off with the rest: `POST /api/pair/qr`
 answers 403, `/pair` as before.

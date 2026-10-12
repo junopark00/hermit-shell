@@ -251,6 +251,7 @@ namespace nvhttp {
     disabled,  ///< enable_pairing is off
     bad_host,  ///< `host` fails the link's host rule
     no_cert,  ///< the server certificate fingerprint is not known (setup() not run)
+    no_random,  ///< RAND_bytes failed; no token was made
   };
 
   /**

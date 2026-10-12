@@ -370,14 +370,17 @@ namespace nvhttp::qr {
   /**
    * @brief The checks of a getservercert with `qr=<id>`, in order; the first failure is the answer.
    * 1. no record or another id → none; 2. a WAN address → network; 3. lifetime over → expired;
-   * 4. used, or in_use from another address → used. An in_use record from the same address passes
-   * (the session is replaced, as any retry from the same device is).
+   * 4. used, or in_use by another device (another uniqueid or another address) → used. An in_use
+   * record held by the same uniqueid from the same address passes (the session is replaced, as
+   * any retry from the same device is); a second device behind the same address gets `used`, so
+   * one token admits one client.
    * @param r The record (state none when there is none).
    * @param id The `qr` argument.
    * @param local_address Whether net::from_address puts the client address in PC or LAN.
+   * @param uniqueid The client's uniqueid.
    * @param address The client address.
    */
-  inline std::optional<refusal_e> check(const record_t &r, std::string_view id, bool local_address, std::string_view address, clock::time_point now) {
+  inline std::optional<refusal_e> check(const record_t &r, std::string_view id, bool local_address, std::string_view uniqueid, std::string_view address, clock::time_point now) {
     if (r.state == state_e::none || r.id != id) {
       return refusal_e::none;
     }
@@ -387,7 +390,7 @@ namespace nvhttp::qr {
     if (r.state == state_e::expired || lifetime_over(r, now)) {
       return refusal_e::expired;
     }
-    if (r.state == state_e::used || (r.state == state_e::in_use && r.bound_address != address)) {
+    if (r.state == state_e::used || (r.state == state_e::in_use && (r.bound_uniqueid != uniqueid || r.bound_address != address))) {
       return refusal_e::used;
     }
     return std::nullopt;

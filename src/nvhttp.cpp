@@ -787,14 +787,27 @@ namespace nvhttp {
     bool same_hash = hash.size() == sess.clienthash.size() && std::equal(hash.begin(), hash.end(), sess.clienthash.begin());
     auto verify = crypto::verify256(crypto::x509(client.cert), secret, sign);
     if (same_hash && verify) {
-      tree.put("root.paired", 1);
-
-      auto named_cert_p = std::make_shared<crypto::named_cert_t>();
-      named_cert_p->name = client.name;
-      for (char& c : named_cert_p->name) {
+      std::string device_name = client.name;
+      for (char& c : device_name) {
         if (c == '(') c = '[';
         else if (c == ')') c = ']';
       }
+
+      // Shell: the QR record admits exactly one client: it is used up here, before the device is
+      // stored, and a session whose record is no longer bound to it (replaced, cancelled or expired
+      // meanwhile) is refused like any other failed pairing
+      if (sess.qr) {
+        if (!qr::complete(qr_record, client.uniqueID, device_name, std::chrono::steady_clock::now())) {
+          fail_pair(sess, tree, std::string {qr::message(qr::refusal_e::used)});
+          return;
+        }
+        BOOST_LOG(info) << "QR pairing completed for [" << device_name << "] from [" << sess.client_address << "]";
+      }
+
+      tree.put("root.paired", 1);
+
+      auto named_cert_p = std::make_shared<crypto::named_cert_t>();
+      named_cert_p->name = std::move(device_name);
       named_cert_p->cert = std::move(client.cert);
       named_cert_p->uuid = uuid_util::uuid_t::generate().string();
       if (client.perm) {
@@ -810,12 +823,6 @@ namespace nvhttp {
       named_cert_p->enable_legacy_ordering = true;
       named_cert_p->allow_client_commands = true;
       named_cert_p->always_use_virtual_display = false;
-
-      // Shell: the QR record is used up before the session goes (remove_session below would
-      // otherwise hand it back as pending); the web UI shows the device name for a minute
-      if (sess.qr && qr::complete(qr_record, client.uniqueID, named_cert_p->name, std::chrono::steady_clock::now())) {
-        BOOST_LOG(info) << "QR pairing completed for [" << named_cert_p->name << "] from [" << sess.client_address << "]";
-      }
 
       // Shell: the session is erased once, by remove_session below; erasing it here as well left
       // remove_session reading the uniqueid from the freed session.
@@ -995,7 +1002,7 @@ namespace nvhttp {
           // nothing about the record. Then the token stands in for the PIN and the client is
           // answered at once: no PIN wait, no tray notification, the record's permissions.
           const bool local = net::from_address(sess.client_address) != net::WAN;
-          if (auto refused = qr::check(qr_record, qr_id, local, sess.client_address, std::chrono::steady_clock::now())) {
+          if (auto refused = qr::check(qr_record, qr_id, local, sess.client.uniqueID, sess.client_address, std::chrono::steady_clock::now())) {
             qr_refuse(tree, *refused, sess.client.name, sess.client_address);
             return;
           }
@@ -3148,6 +3155,10 @@ namespace nvhttp {
     }
 
     auto random = crypto::rand(qr::token_bytes);
+    if (random.size() != qr::token_bytes) {
+      BOOST_LOG(error) << "QR pairing not created: OpenSSL gave no random bytes for the token"sv;
+      return qr_create_e::no_random;
+    }
     auto token = qr::token_from_bytes(reinterpret_cast<const std::uint8_t *>(random.data()));
     auto record = qr::make_record(std::move(token), static_cast<std::uint32_t>(perm), creator_address, std::chrono::steady_clock::now());
 

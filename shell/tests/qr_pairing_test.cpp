@@ -3,7 +3,7 @@
 // certificate fingerprint against `openssl x509 -fingerprint -sha256`, the link (key order,
 // percent-encoding, the 320-byte cut of `name`), the host rule and the record state machine in
 // the order of its checks (none, network, expired, used; binding, release and completion by the
-// bound address only). No network.
+// bound uniqueid and address only; one token admits one client). No network.
 //
 // Build and run from the repository root in MSYS2 UCRT64 (one line):
 //   g++ -std=c++20 -O1 -iquote src shell/tests/qr_pairing_test.cpp -lcrypto -o build/qr_pairing_test.exe
@@ -167,45 +167,55 @@ int main(int argc, char **argv) {
   std::printf("state machine: check order\n");
   {
     qr::record_t none;
-    check("no record: none", qr::check(none, "0123456789abcdef", true, "192.168.0.20", t0) == qr::refusal_e::none);
+    check("no record: none", qr::check(none, "0123456789abcdef", true, "uid-A", "192.168.0.20", t0) == qr::refusal_e::none);
 
     auto r = qr::make_record("AAAQEAYEAUDAOCAJBIFQYDIOB4", 0x071F1F00, "127.0.0.1", t0);
     check("fresh record is pending", r.state == qr::state_e::pending && r.id == "34d0f11c23c59e23" && r.token == "AAAQEAYEAUDAOCAJBIFQYDIOB4");
-    check("wrong id: none (before the network check)", qr::check(r, "ffffffffffffffff", false, "8.8.8.8", t0) == qr::refusal_e::none);
-    check("WAN address: network", qr::check(r, r.id, false, "8.8.8.8", t0) == qr::refusal_e::network);
-    check("WAN address before expiry", qr::check(r, r.id, false, "8.8.8.8", t0 + 121s) == qr::refusal_e::network);
-    check("120 s: still valid", !qr::check(r, r.id, true, "192.168.0.20", t0 + 120s));
-    check("after 120 s: expired", qr::check(r, r.id, true, "192.168.0.20", t0 + 120s + 1ms) == qr::refusal_e::expired);
-    check("pending from LAN passes", !qr::check(r, r.id, true, "192.168.0.20", t0 + 10s));
+    check("wrong id: none (before the network check)", qr::check(r, "ffffffffffffffff", false, "uid-A", "8.8.8.8", t0) == qr::refusal_e::none);
+    check("WAN address: network", qr::check(r, r.id, false, "uid-A", "8.8.8.8", t0) == qr::refusal_e::network);
+    check("WAN address before expiry", qr::check(r, r.id, false, "uid-A", "8.8.8.8", t0 + 121s) == qr::refusal_e::network);
+    check("120 s: still valid", !qr::check(r, r.id, true, "uid-A", "192.168.0.20", t0 + 120s));
+    check("after 120 s: expired", qr::check(r, r.id, true, "uid-A", "192.168.0.20", t0 + 120s + 1ms) == qr::refusal_e::expired);
+    check("pending from LAN passes", !qr::check(r, r.id, true, "uid-A", "192.168.0.20", t0 + 10s));
 
     qr::bind(r, "uid-A", "192.168.0.20");
     check("bound: in_use", r.state == qr::state_e::in_use && r.bound_uniqueid == "uid-A" && r.bound_address == "192.168.0.20");
-    check("in_use from another address: used", qr::check(r, r.id, true, "192.168.0.21", t0 + 11s) == qr::refusal_e::used);
-    check("in_use from the same address passes (retry replaces)", !qr::check(r, r.id, true, "192.168.0.20", t0 + 11s));
-    check("expired wins over used", qr::check(r, r.id, true, "192.168.0.21", t0 + 200s) == qr::refusal_e::expired);
-    check("WAN wins over used", qr::check(r, r.id, false, "1.2.3.4", t0 + 11s) == qr::refusal_e::network);
+    check("in_use from another address: used", qr::check(r, r.id, true, "uid-A", "192.168.0.21", t0 + 11s) == qr::refusal_e::used);
+    check("in_use from the same address passes (retry replaces)", !qr::check(r, r.id, true, "uid-A", "192.168.0.20", t0 + 11s));
+    // a second device behind the same address (NAT): another uniqueid, same address
+    check("in_use by another uniqueid from the same address: used", qr::check(r, r.id, true, "uid-B", "192.168.0.20", t0 + 11s) == qr::refusal_e::used);
+    check("in_use by the same uniqueid from another address: used", qr::check(r, r.id, true, "uid-A", "192.168.0.21", t0 + 11s) == qr::refusal_e::used);
+    {
+      // the second device cannot finish either: complete() refuses it and leaves the holder bound
+      auto nat = r;
+      check("second device cannot complete", !qr::complete(nat, "uid-B", "Intruder", t0 + 12s) && nat.state == qr::state_e::in_use && nat.bound_uniqueid == "uid-A" && nat.paired_name.empty());
+      check("holder still completes", qr::complete(nat, "uid-A", "Phone", t0 + 13s) && nat.state == qr::state_e::used);
+      check("then nobody else does", !qr::complete(nat, "uid-B", "Intruder", t0 + 14s) && nat.paired_name == "Phone");
+    }
+    check("expired wins over used", qr::check(r, r.id, true, "uid-A", "192.168.0.21", t0 + 200s) == qr::refusal_e::expired);
+    check("WAN wins over used", qr::check(r, r.id, false, "uid-A", "1.2.3.4", t0 + 11s) == qr::refusal_e::network);
 
     // release: the bound address and uniqueid only
     auto held = r;
     check("another address cannot release", !qr::release(held, "uid-A", "192.168.0.21") && held.state == qr::state_e::in_use);
     check("another uniqueid cannot release", !qr::release(held, "uid-B", "192.168.0.20") && held.state == qr::state_e::in_use);
     check("the holder releases: pending again", qr::release(held, "uid-A", "192.168.0.20") && held.state == qr::state_e::pending && held.bound_uniqueid.empty() && held.bound_address.empty());
-    check("released record passes again from a new address", !qr::check(held, held.id, true, "192.168.0.21", t0 + 12s));
+    check("released record passes again from a new address", !qr::check(held, held.id, true, "uid-A", "192.168.0.21", t0 + 12s));
     check("pending cannot be released", !qr::release(held, "uid-A", "192.168.0.20"));
 
     // completion: the holder only; then used for everyone
     auto done = r;
     check("another uniqueid cannot complete", !qr::complete(done, "uid-B", "Phone", t0 + 20s));
     check("the holder completes: used", qr::complete(done, "uid-A", "Phone", t0 + 20s) && done.state == qr::state_e::used && done.paired_name == "Phone");
-    check("used from the same address: used", qr::check(done, done.id, true, "192.168.0.20", t0 + 21s) == qr::refusal_e::used);
-    check("used from another address: used", qr::check(done, done.id, true, "192.168.0.21", t0 + 21s) == qr::refusal_e::used);
+    check("used from the same address: used", qr::check(done, done.id, true, "uid-A", "192.168.0.20", t0 + 21s) == qr::refusal_e::used);
+    check("used from another address: used", qr::check(done, done.id, true, "uid-A", "192.168.0.21", t0 + 21s) == qr::refusal_e::used);
     check("used cannot be released", !qr::release(done, "uid-A", "192.168.0.20") && done.state == qr::state_e::used);
     check("used cannot expire", !qr::expire(done) && done.state == qr::state_e::used);
 
     // expiry by drop_stale_sessions
     auto old = r;
     check("in_use expires", qr::expire(old) && old.state == qr::state_e::expired);
-    check("expired: expired even within the lifetime", qr::check(old, old.id, true, "192.168.0.20", t0 + 30s) == qr::refusal_e::expired);
+    check("expired: expired even within the lifetime", qr::check(old, old.id, true, "uid-A", "192.168.0.20", t0 + 30s) == qr::refusal_e::expired);
     check("expired cannot be released", !qr::release(old, "uid-A", "192.168.0.20"));
     qr::record_t fresh = qr::make_record("77777777777777777777777774", 0x03000000, "127.0.0.1", t0);
     check("pending expires", qr::expire(fresh) && fresh.state == qr::state_e::expired);

@@ -392,7 +392,11 @@ namespace crypto {
     std::string r;
     r.resize(bytes);
 
-    RAND_bytes((uint8_t *) r.data(), r.size());
+    // Shell: a failed RAND_bytes (the DRBG could not be seeded) left the bytes unset; an empty
+    // result lets the caller refuse instead of using them
+    if (RAND_bytes((uint8_t *) r.data(), r.size()) != 1) {
+      r.clear();
+    }
 
     return r;
   }

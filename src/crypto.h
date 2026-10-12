@@ -131,6 +131,7 @@ namespace crypto {
 
   std::string_view signature(const x509_t &x);
 
+  /// `bytes` random bytes from OpenSSL's RAND_bytes; Shell: empty when RAND_bytes fails.
   std::string rand(std::size_t bytes);
   std::string rand_alphabet(std::size_t bytes, const std::string_view &alphabet = std::string_view {"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!%&()=-"});
 
