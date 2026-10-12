@@ -14,6 +14,7 @@
 #include <display_device/settings_manager_interface.h>
 #include <algorithm>
 #include <mutex>
+#include <optional>
 #include <regex>
 #include <thread>
 
@@ -657,7 +658,12 @@ namespace display_device {
         scheduler_option.m_execution = SchedulerOptions::Execution::ScheduledOnly;
       }
 
-      DD_DATA.sm_instance->schedule([try_once = (option == revert_option_e::try_once), tried_out_devices = std::set<std::string> {}](auto &settings_iface, auto &stop_token) mutable {
+      // Shell: tried_out_devices is empty until a revert was actually tried. Before, it started as an
+      // empty set, which equals "no display enumerated"; with every monitor off (and no virtual
+      // display) the first run then skipped the revert without stopping, and the scheduler kept
+      // enumerating every 5 seconds, each time logging "Failed to collect path source data" from
+      // libdisplaydevice, although there was nothing to revert.
+      DD_DATA.sm_instance->schedule([try_once = (option == revert_option_e::try_once), tried_out_devices = std::optional<std::set<std::string>> {}](auto &settings_iface, auto &stop_token) mutable {
         if (try_once) {
           std::ignore = settings_iface.revertSettings();
           stop_token.requestStop();
@@ -679,7 +685,7 @@ namespace display_device {
 
           return parsed_devices;
         }()};
-        if (available_devices == tried_out_devices) {
+        if (tried_out_devices && available_devices == *tried_out_devices) {
           BOOST_LOG(debug) << "Skipping reverting configuration, because no newly added/removed devices were detected since last check. Currently available devices:\n"
                            << toJson(available_devices);
           return;
@@ -697,7 +703,7 @@ namespace display_device {
         // If we have failed to revert settings then we will try to do it next time only if a device was added/removed
         BOOST_LOG(warning) << "Failed to revert display device configuration (will retry once devices are added or removed). Enabling all of the available devices:\n"
                            << toJson(available_devices);
-        tried_out_devices.swap(available_devices);
+        tried_out_devices = std::move(available_devices);
       },
                                     scheduler_option);
     }
