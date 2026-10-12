@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstring>
 #include <cwctype>
+#include <mutex>
 #include <set>
 #include <thread>
 #include <unordered_map>
@@ -210,6 +211,9 @@ namespace {
 	// computer", what `powercfg /devicequery wake_armed` lists). known is false when the list could
 	// not be read.
 	std::set<std::wstring> wake_armed_devices(bool &known) {
+		// DevicePowerOpen/Close are process-wide: one query at a time
+		static std::mutex mutex;
+		std::lock_guard lock(mutex);
 		std::set<std::wstring> devices;
 		known = false;
 		if (!DevicePowerOpen(0)) {
