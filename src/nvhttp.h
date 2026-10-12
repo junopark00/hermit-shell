@@ -143,6 +143,10 @@ namespace nvhttp {
     /// Shell: the address (net::addr_to_normalized_string) the getservercert request came from.
     /// `/unpair` cancels the session from this address only, and pin() checks its rate limit.
     std::string client_address = {};
+
+    /// Shell: started with a QR record (`qr=<id>`): the token stood in for the PIN, no PIN is
+    /// awaited, and the session is replaced, continued or cancelled from client_address only.
+    bool qr = false;
   };
 
   /**
@@ -231,6 +235,50 @@ namespace nvhttp {
    * @examples_end
    */
   pin_result_e pin(std::string pin, std::string name, std::optional<crypto::PERM> perm = std::nullopt);
+
+  /**
+   * @brief Shell: QR pairing (docs/features.md "QR pairing"). The web UI creates one record at a
+   * time; a client that scans the QR pairs with its token in place of the PIN. The record lives in
+   * memory only, under the pairing sessions' lock.
+   */
+  struct qr_created_t {
+    std::string link;  ///< the `hermit://pair?...` link, returned once and never logged
+    int expires_in;  ///< seconds
+  };
+
+  enum class qr_create_e {
+    ok,
+    disabled,  ///< enable_pairing is off
+    bad_host,  ///< `host` fails the link's host rule
+    no_cert,  ///< the server certificate fingerprint is not known (setup() not run)
+  };
+
+  /**
+   * @brief Create the QR record, replacing the previous one (its sessions are told "Superseded").
+   * @param perm The permissions the paired device gets, already masked with `PERM::_all`.
+   * @param host The host the client connects to, as the link's host rule allows it.
+   * @param creator_address The web UI client's address, for the log.
+   * @param out The link and its lifetime on success.
+   */
+  qr_create_e qr_create(crypto::PERM perm, const std::string &host, const std::string &creator_address, qr_created_t &out);
+
+  /**
+   * @brief The record's state for the web UI: `{"state": "none|pending|in_use|used|expired",
+   * "remaining": <seconds>, "paired_name": "<device>"}`. Neither the token nor the link nor the id.
+   */
+  nlohmann::json qr_state();
+
+  /// Drop the QR record and the sessions bound to it. Returns whether there was a record.
+  bool qr_cancel(const std::string &canceller_address);
+
+  /**
+   * @brief The IPv4 addresses a QR link may name: the host's LAN and Tailscale addresses (as
+   * net::from_address classes them), without loopback and link-local ones, private ranges first.
+   */
+  std::vector<std::string> qr_hosts();
+
+  /// SHA-256 of the DER server certificate as 64 lower-case hex characters; empty before setup().
+  std::string server_cert_fingerprint();
 
   /**
    * @brief Remove single client.

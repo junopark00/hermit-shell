@@ -190,6 +190,22 @@ namespace platf {
     return "00:00:00:00:00:00"s;
   }
 
+  std::vector<std::string> local_ipv4_addresses() {
+    std::vector<std::string> addresses;
+    adapteraddrs_t info = get_adapteraddrs();
+    for (auto adapter_pos = info.get(); adapter_pos != nullptr; adapter_pos = adapter_pos->Next) {
+      if (adapter_pos->OperStatus != IfOperStatusUp || adapter_pos->IfType == IF_TYPE_SOFTWARE_LOOPBACK) {
+        continue;
+      }
+      for (auto addr_pos = adapter_pos->FirstUnicastAddress; addr_pos != nullptr; addr_pos = addr_pos->Next) {
+        if (addr_pos->Address.lpSockaddr->sa_family == AF_INET) {
+          addresses.push_back(from_sockaddr(addr_pos->Address.lpSockaddr));
+        }
+      }
+    }
+    return addresses;
+  }
+
   HDESK syncThreadDesktop() {
     auto hDesk = OpenInputDesktop(DF_ALLOWOTHERACCOUNTHOOK, FALSE, GENERIC_ALL);
     if (!hDesk) {

@@ -40,6 +40,7 @@
 #include "platform/common.h"
 #include "platform/cursor_bus.h"
 #include "process.h"
+#include "qr_pairing.h"
 #include "rtsp.h"
 #include "stream.h"
 #include "system_tray.h"
@@ -164,6 +165,13 @@ namespace nvhttp {
   // (the pairing phases, fail_pair, remove_session, answer_waiting_request, drop_stale_sessions)
   // expects it held and never takes it, so nothing locks it twice.
   std::mutex map_id_sess_mutex;
+
+  // Shell: the one QR pairing record (docs/features.md "QR pairing"), guarded by map_id_sess_mutex
+  // like the sessions it binds to. State none means there is none. Memory only: it is not written
+  // to the state file and goes with a restart.
+  qr::record_t qr_record;
+  // Shell: SHA-256 of the DER server certificate, computed once in setup() for the QR link
+  std::string qr_fingerprint;
 
   // Shell: pairing attempts per client address (see pair_rate_limited); guarded by pair_rate_mutex
   struct pair_rate_entry_t {
@@ -576,12 +584,19 @@ namespace nvhttp {
 
   /// Shell: erases the session of uniqueid, answering its waiting request first. Expects
   /// map_id_sess_mutex held. Returns whether there was one.
+  /// A QR session that still holds its record (an unfinished attempt: its own phase failure, a
+  /// retry or `/unpair` from its address; every caller that reaches a QR session has checked the
+  /// address) gives the record back (pending), so a retry within the lifetime works. A finished
+  /// (used) or timed-out (expired) record was moved on before and stays as it is.
   bool erase_session(const std::string &unique_id, const std::string &why) {
     auto it = map_id_sess.find(unique_id);
     if (it == std::end(map_id_sess)) {
       return false;
     }
     answer_waiting_request(it->second, why);
+    if (it->second.qr && qr::release(qr_record, unique_id, it->second.client_address)) {
+      BOOST_LOG(debug) << "QR pairing record released by [" << it->second.client.name << "]: pending again";
+    }
     map_id_sess.erase(it);
     return true;
   }
@@ -600,6 +615,15 @@ namespace nvhttp {
         BOOST_LOG(info) << "Pairing request of [" << it->second.client.name << "] expired: no PIN was entered within 5 minutes";
         answer_waiting_request(it->second, "No PIN was entered in time");
         webhook::pairing_failed(it->second.client.name, "No PIN was entered in time", it->second.client_address);
+        it = map_id_sess.erase(it);
+      } else if (it->second.qr && (qr_record.state == qr::state_e::none || qr::lifetime_over(qr_record, now))) {
+        // Shell: a QR session stuck after getservercert (the client stopped at a certificate
+        // mismatch and its /unpair was lost) goes with the record's lifetime, and the record with it
+        BOOST_LOG(info) << "QR pairing session of [" << it->second.client.name << "] dropped: the QR code expired";
+        if (qr_record.bound_uniqueid == it->first && qr::expire(qr_record)) {
+          BOOST_LOG(info) << "QR pairing expired while [" << it->second.client.name << "] was pairing";
+        }
+        webhook::pairing_failed(it->second.client.name, "QR code expired", it->second.client_address);
         it = map_id_sess.erase(it);
       } else {
         ++it;
@@ -787,6 +811,12 @@ namespace nvhttp {
       named_cert_p->allow_client_commands = true;
       named_cert_p->always_use_virtual_display = false;
 
+      // Shell: the QR record is used up before the session goes (remove_session below would
+      // otherwise hand it back as pending); the web UI shows the device name for a minute
+      if (sess.qr && qr::complete(qr_record, client.uniqueID, named_cert_p->name, std::chrono::steady_clock::now())) {
+        BOOST_LOG(info) << "QR pairing completed for [" << named_cert_p->name << "] from [" << sess.client_address << "]";
+      }
+
       // Shell: the session is erased once, by remove_session below; erasing it here as well left
       // remove_session reading the uniqueid from the freed session.
       add_authorized_client(named_cert_p);
@@ -853,6 +883,20 @@ namespace nvhttp {
     response->close_connection_after_response = true;
   }
 
+  /**
+   * @brief Shell: answers a `/pair` request refused by a QR check as a failed pairing: 400,
+   * `paired` 0, `status_message` "QR_<reason>: ..." (the only text the clients show) and the
+   * attribute `qr_reason`. Logged without the id or token.
+   */
+  void qr_refuse(pt::ptree &tree, qr::refusal_e why, const std::string &client_name, const std::string &client_address) {
+    tree.put("root.paired", 0);
+    tree.put("root.<xmlattr>.status_code", 400);
+    tree.put("root.<xmlattr>.status_message", std::string {qr::message(why)});
+    tree.put("root.<xmlattr>.qr_reason", std::string {qr::reason(why)});
+    BOOST_LOG(info) << "QR pairing refused from [" << client_address << "]: " << qr::reason(why);
+    webhook::pairing_failed(client_name, std::string {qr::message(why)}, client_address);
+  }
+
   template <class T>
   void pair(std::shared_ptr<typename SimpleWeb::ServerBase<T>::Response> response, std::shared_ptr<typename SimpleWeb::ServerBase<T>::Request> request) {
     print_req<T>(request);
@@ -916,10 +960,14 @@ namespace nvhttp {
 
         BOOST_LOG(debug) << sess.client.cert;
 
+        // Shell: QR pairing (docs/features.md "QR pairing"): the record id the client computed from
+        // the token in the QR code; empty for the PIN flow, which is unchanged
+        const auto qr_id = get_arg(args, "qr", "");
+
         // Shell: read before the sessions are locked, so a PIN typed slowly holds up nobody else
         const bool pin_stdin = config::shell.flags[config::flag::PIN_STDIN];
         std::string pin;
-        if (pin_stdin) {
+        if (pin_stdin && qr_id.empty()) {
           std::cout << "Please insert pin: "sv;
           std::getline(std::cin, pin);
         }
@@ -927,11 +975,39 @@ namespace nvhttp {
         // Shell: released before fg writes the reply
         std::lock_guard lock {map_id_sess_mutex};
         drop_stale_sessions();
+        // Shell: a QR session is replaced from its own address only. uniqueid and the record id
+        // travel over plain HTTP, so a LAN listener could otherwise drop the device's session with
+        // a plain getservercert (handing the record back) and lock the record from its own address.
+        // Any other address is told the QR code is in use, and nothing changes.
+        if (auto old = map_id_sess.find(sess.client.uniqueID); old != std::end(map_id_sess) && old->second.qr && old->second.client_address != sess.client_address) {
+          qr_refuse(tree, qr::refusal_e::used, sess.client.name, sess.client_address);
+          return;
+        }
         // Shell: a new pairing attempt replaces any earlier session of this uniqueid (a wrong PIN
         // leaves one at SERVERCHALLENGERESP, a dropped handshake at GETSERVERCERT). Kept, it would
         // never be offered a PIN again, and stock clients all share one uniqueid. A request it still
         // keeps waiting for the PIN is told so, rather than left to time out.
         erase_session(sess.client.uniqueID, "Superseded by a newer pairing attempt");
+
+        if (!qr_id.empty()) {
+          // Shell: the checks in the order of the design: no record or another id, a WAN address,
+          // expired, used (or held from another address). A wrong id and a WAN address learn
+          // nothing about the record. Then the token stands in for the PIN and the client is
+          // answered at once: no PIN wait, no tray notification, the record's permissions.
+          const bool local = net::from_address(sess.client_address) != net::WAN;
+          if (auto refused = qr::check(qr_record, qr_id, local, sess.client_address, std::chrono::steady_clock::now())) {
+            qr_refuse(tree, *refused, sess.client.name, sess.client_address);
+            return;
+          }
+          qr::bind(qr_record, sess.client.uniqueID, sess.client_address);
+          sess.qr = true;
+          sess.client.perm = static_cast<PERM>(qr_record.perm);
+          BOOST_LOG(info) << "QR pairing started for [" << sess.client.name << "] from [" << sess.client_address << "]";
+          auto ptr = map_id_sess.emplace(sess.client.uniqueID, std::move(sess)).first;
+          getservercert(ptr->second, tree, qr_record.token);
+          return;
+        }
+
         auto ptr = map_id_sess.emplace(sess.client.uniqueID, std::move(sess)).first;
 
         if (pin_stdin) {
@@ -963,6 +1039,13 @@ namespace nvhttp {
       tree.put("root.<xmlattr>.status_code", 400);
       tree.put("root.<xmlattr>.status_message", "Invalid uniqueid");
 
+      return;
+    }
+
+    // Shell: the later phases of a QR session come from its address only; another address with
+    // the same uniqueid could otherwise fail the session (and free the record) without the token
+    if (sess_it->second.qr && sess_it->second.client_address != client_address) {
+      qr_refuse(tree, qr::refusal_e::used, sess_it->second.client.name, client_address);
       return;
     }
 
@@ -1267,6 +1350,10 @@ namespace nvhttp {
     tree.put("root.ServerCodecModeSupport", codec_mode_flags);
 
     tree.put("root.PairStatus", pair_status);
+    // Shell: QR pairing protocol version (docs/features.md "QR pairing"); clients check it before
+    // sending getservercert with `qr=`, so an older host gets no QR request. Public, like the rest
+    // of the HTTP serverinfo.
+    tree.put("root.qrPairing", 1);
 
     if constexpr (std::is_same_v<ShellHTTPS, T>) {
       int current_appid = proc::proc.running();
@@ -3036,6 +3123,111 @@ namespace nvhttp {
   void setup(const std::string &pkey, const std::string &cert) {
     conf_intern.pkey = pkey;
     conf_intern.servercert = cert;
+
+    // Shell: the fingerprint the QR link carries (the same value as
+    // `openssl x509 -fingerprint -sha256`, lower case, without colons)
+    qr_fingerprint = qr::cert_fingerprint(cert);
+    if (qr_fingerprint.empty()) {
+      BOOST_LOG(warning) << "Server certificate fingerprint not computed: QR pairing is unavailable"sv;
+    }
+  }
+
+  std::string server_cert_fingerprint() {
+    return qr_fingerprint;
+  }
+
+  qr_create_e qr_create(crypto::PERM perm, const std::string &host, const std::string &creator_address, qr_created_t &out) {
+    if (!config::shell.enable_pairing) {
+      return qr_create_e::disabled;
+    }
+    if (!qr::valid_host(host)) {
+      return qr_create_e::bad_host;
+    }
+    if (qr_fingerprint.empty()) {
+      return qr_create_e::no_cert;
+    }
+
+    auto random = crypto::rand(qr::token_bytes);
+    auto token = qr::token_from_bytes(reinterpret_cast<const std::uint8_t *>(random.data()));
+    auto record = qr::make_record(std::move(token), static_cast<std::uint32_t>(perm), creator_address, std::chrono::steady_clock::now());
+
+    std::lock_guard lock {map_id_sess_mutex};
+    drop_stale_sessions();
+    // Shell: one record at a time; the sessions bound to the previous one end as a replaced
+    // pairing attempt does (the previous record goes with them, so nothing is handed back)
+    for (auto it = std::begin(map_id_sess); it != std::end(map_id_sess);) {
+      if (it->second.qr) {
+        const auto unique_id = it->first;
+        ++it;
+        erase_session(unique_id, "Superseded by a new QR code");
+      } else {
+        ++it;
+      }
+    }
+    qr_record = std::move(record);
+
+    out.link = qr::build_link(host, net::map_port(PORT_HTTP), qr_fingerprint, qr_record.token, config::nvhttp.shell_name);
+    out.expires_in = static_cast<int>(std::chrono::duration_cast<std::chrono::seconds>(qr::lifetime).count());
+    BOOST_LOG(info) << "QR pairing created from [" << creator_address << "] with preset " << qr::preset_name(qr_record.perm)
+                    << ", expires in " << out.expires_in << " s";
+    return qr_create_e::ok;
+  }
+
+  nlohmann::json qr_state() {
+    nlohmann::json tree;
+    std::lock_guard lock {map_id_sess_mutex};
+    drop_stale_sessions();
+    const auto now = std::chrono::steady_clock::now();
+    const auto state = qr::visible_state(qr_record, now);
+    tree["state"] = std::string {qr::state_name(state)};
+    tree["remaining"] = qr::remaining_seconds(qr_record, now);
+    tree["paired_name"] = state == qr::state_e::used ? qr_record.paired_name : std::string {};
+    return tree;
+  }
+
+  bool qr_cancel(const std::string &canceller_address) {
+    std::lock_guard lock {map_id_sess_mutex};
+    if (qr_record.state == qr::state_e::none) {
+      return false;
+    }
+    for (auto it = std::begin(map_id_sess); it != std::end(map_id_sess);) {
+      if (it->second.qr) {
+        const auto unique_id = it->first;
+        ++it;
+        erase_session(unique_id, "QR pairing was cancelled");
+      } else {
+        ++it;
+      }
+    }
+    qr_record = qr::record_t {};
+    BOOST_LOG(info) << "QR pairing cancelled from [" << canceller_address << "]";
+    return true;
+  }
+
+  std::vector<std::string> qr_hosts() {
+    std::vector<std::string> lan;
+    std::vector<std::string> tailscale;
+#ifdef _WIN32
+    const auto tailscale_range = boost::asio::ip::make_network_v4("100.64.0.0/10");
+    const auto link_local = boost::asio::ip::make_network_v4("169.254.0.0/16");
+    for (const auto &address : platf::local_ipv4_addresses()) {
+      boost::system::error_code ec;
+      auto v4 = boost::asio::ip::make_address_v4(address, ec);
+      if (ec || v4.is_loopback() || link_local.hosts().find(v4) != link_local.hosts().end()) {
+        continue;
+      }
+      if (net::from_address(address) != net::LAN) {
+        continue;
+      }
+      if (tailscale_range.hosts().find(v4) != tailscale_range.hosts().end()) {
+        tailscale.push_back(address);
+      } else {
+        lan.push_back(address);
+      }
+    }
+#endif
+    lan.insert(std::end(lan), std::begin(tailscale), std::end(tailscale));
+    return lan;
   }
 
   void start() {

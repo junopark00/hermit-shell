@@ -10,6 +10,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <vector>
 
 // platform includes
 #include <Windows.h>
@@ -18,6 +19,12 @@
 namespace platf {
   void print_status(const std::string_view &prefix, HRESULT status);
   HDESK syncThreadDesktop();
+
+  /**
+   * @brief Shell: the IPv4 unicast addresses of the adapters that are up, loopback adapters left
+   * out, in adapter order (for the QR pairing link's host list).
+   */
+  std::vector<std::string> local_ipv4_addresses();
 
   int64_t qpc_counter();
 
