@@ -99,6 +99,22 @@ namespace confighttp {
   }
 
   /**
+   * @brief Shell: send a JSON response the browser must not cache (`Cache-Control: no-store`),
+   * for replies that carry a secret once or a state that changes every second.
+   * @param response The HTTP response object.
+   * @param output_tree The JSON tree to send.
+   * @param code The status code.
+   */
+  void send_response_no_store(resp_https_t response, const nlohmann::json &output_tree, SimpleWeb::StatusCode code = SimpleWeb::StatusCode::success_ok) {
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace("Content-Type", "application/json");
+    headers.emplace("Cache-Control", "no-store");
+    headers.emplace("X-Frame-Options", "DENY");
+    headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
+    response->write(code, output_tree.dump(), headers);
+  }
+
+  /**
    * @brief Send a 401 Unauthorized response.
    * @param response The HTTP response object.
    * @param request The HTTP request object.
@@ -1747,6 +1763,140 @@ namespace confighttp {
   }
 
   /**
+   * @brief Shell: create the QR pairing record (docs/features.md "QR pairing"), replacing the
+   * previous one. The link is returned here once and never again (not by GET, not in the log).
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   *
+   * The body is JSON:
+   * @code{.json}
+   * {
+   *   "perm": <uint32_t>,
+   *   "host": "192.168.0.10"
+   * }
+   * @endcode
+   * `perm` is the permission bit set the paired device gets, masked with `PERM::_all` like in
+   * `/api/pin`. `host` is what the client connects to: an IPv4 address, a bracketed IPv6 address or
+   * a host name of at most 253 characters, usually one of `GET /api/pair/qr/hosts`.
+   *
+   * The reply is `{"status": true, "link": "hermit://pair?v=1&host=...", "expires_in": 120}`, with
+   * `Cache-Control: no-store`. With `enable_pairing` off the reply is 403, like `/pair` itself.
+   *
+   * @api_examples{/api/pair/qr| POST| {"perm":119480064,"host":"192.168.0.10"}}
+   */
+  void createPairQr(resp_https_t response, req_https_t request) {
+    if (!validateContentType(response, request, "application/json") || !authenticate(response, request)) {
+      return;
+    }
+
+    print_req(request);
+
+    const auto address = net::addr_to_normalized_string(request->remote_endpoint().address());
+    try {
+      std::stringstream ss;
+      ss << request->content.rdbuf();
+      nlohmann::json input_tree = nlohmann::json::parse(ss.str());
+      const auto perm = static_cast<crypto::PERM>(input_tree.value("perm", static_cast<uint32_t>(crypto::PERM::_no)) & static_cast<uint32_t>(crypto::PERM::_all));
+      std::string host = input_tree.value("host", "");
+      boost::algorithm::trim(host);
+
+      nvhttp::qr_created_t created;
+      switch (nvhttp::qr_create(perm, host, address, created)) {
+        case nvhttp::qr_create_e::ok: {
+          nlohmann::json output_tree;
+          output_tree["status"] = true;
+          output_tree["link"] = created.link;
+          output_tree["expires_in"] = created.expires_in;
+          send_response_no_store(response, output_tree);
+          return;
+        }
+        case nvhttp::qr_create_e::disabled: {
+          nlohmann::json output_tree;
+          output_tree["status"] = false;
+          output_tree["error"] = "Pairing is disabled for this instance";
+          send_response_no_store(response, output_tree, SimpleWeb::StatusCode::client_error_forbidden);
+          return;
+        }
+        case nvhttp::qr_create_e::bad_host:
+          bad_request(response, request, "host must be an IPv4 address, a bracketed IPv6 address or a host name (at most 253 characters, no zone id)");
+          return;
+        case nvhttp::qr_create_e::no_cert:
+          bad_request(response, request, "The server certificate fingerprint is not available");
+          return;
+      }
+    } catch (std::exception &e) {
+      BOOST_LOG(warning) << "QR pairing: "sv << e.what();
+      bad_request(response, request, e.what());
+    }
+  }
+
+  /**
+   * @brief Shell: the state of the QR pairing record, for the page's 2-second polling.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   *
+   * The reply is `{"status": true, "state": "none|pending|in_use|used|expired", "remaining":
+   * <seconds>, "paired_name": "<device>"}` with `Cache-Control: no-store`. `remaining` counts down
+   * while `pending` or `in_use`; `paired_name` is the name the device sent, set while `used` (shown
+   * for a minute after the pairing). The token, the link and the id are never returned here.
+   *
+   * @api_examples{/api/pair/qr| GET| null}
+   */
+  void getPairQr(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) {
+      return;
+    }
+
+    nlohmann::json output_tree = nvhttp::qr_state();
+    output_tree["status"] = true;
+    send_response_no_store(response, output_tree);
+  }
+
+  /**
+   * @brief Shell: the host addresses a QR link may name: the host's LAN and Tailscale IPv4
+   * addresses, private ranges first, without loopback and link-local ones. The page offers them
+   * in a list (the first is the default) beside a free field.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   *
+   * @api_examples{/api/pair/qr/hosts| GET| null}
+   */
+  void getPairQrHosts(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) {
+      return;
+    }
+
+    nlohmann::json output_tree;
+    output_tree["status"] = true;
+    output_tree["hosts"] = nvhttp::qr_hosts();
+    send_response_no_store(response, output_tree);
+  }
+
+  /**
+   * @brief Shell: drop the QR pairing record and the pairing sessions bound to it.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   *
+   * The reply is `{"status": true, "cancelled": <bool>}`; `cancelled` is false when there was no
+   * record.
+   *
+   * @api_examples{/api/pair/qr| DELETE| null}
+   */
+  void cancelPairQr(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) {
+      return;
+    }
+
+    print_req(request);
+
+    const auto address = net::addr_to_normalized_string(request->remote_endpoint().address());
+    nlohmann::json output_tree;
+    output_tree["status"] = true;
+    output_tree["cancelled"] = nvhttp::qr_cancel(address);
+    send_response_no_store(response, output_tree);
+  }
+
+  /**
    * @brief Reset the display device persistence.
    * @param response The HTTP response object.
    * @param request The HTTP request object.
@@ -1980,6 +2130,11 @@ namespace confighttp {
     server.resource["^/troubleshooting/?$"]["GET"] = getTroubleshootingPage;
     server.resource["^/api/login"]["POST"] = login;
     server.resource["^/api/pin$"]["POST"] = savePin;
+    // Shell: QR pairing; DELETE is registered per path since default_resource["DELETE"] answers 400
+    server.resource["^/api/pair/qr$"]["POST"] = createPairQr;
+    server.resource["^/api/pair/qr$"]["GET"] = getPairQr;
+    server.resource["^/api/pair/qr$"]["DELETE"] = cancelPairQr;
+    server.resource["^/api/pair/qr/hosts$"]["GET"] = getPairQrHosts;
     server.resource["^/api/apps$"]["GET"] = getApps;
     server.resource["^/api/apps$"]["POST"] = saveApp;
     server.resource["^/api/apps/reorder$"]["POST"] = reorderApps;
