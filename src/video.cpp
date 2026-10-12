@@ -523,13 +523,6 @@ namespace video {
       }
     }
 
-    int preset_for(const config_t &config) {
-      std::lock_guard lg {guard_state.mutex};
-      sync_with_config();
-      auto it = guard_state.next_preset.find(geometry(config));
-      return it == guard_state.next_preset.end() ? guard_state.configured_preset : it->second;
-    }
-
     // The budget was exceeded for the first time in this session: with "adjust", the next session
     // with the same geometry starts one preset faster. used_preset is 0 for non-NVENC encoders.
     void on_exceeded(const config_t &config, int used_preset) {
@@ -565,12 +558,8 @@ namespace video {
           second_start(std::chrono::steady_clock::now()) {
       }
 
-      bool active() const {
-        return out && frame_interval_us > 0;
-      }
-
       void add(std::chrono::steady_clock::time_point start, std::chrono::steady_clock::time_point end) {
-        if (!active()) {
+        if (!out || frame_interval_us <= 0) {
           return;
         }
         if (count < samples.size()) {
@@ -585,7 +574,7 @@ namespace video {
 
     private:
       void evaluate(std::int64_t window_us) {
-        if (count < (std::size_t) min_frames_per_s || window_us <= 0) {
+        if (count < (std::size_t) min_frames_per_s) {
           return;  // static content or start-up: too few frames to judge
         }
 
@@ -660,7 +649,11 @@ namespace video {
   }  // namespace encode_budget
 
   int nvenc_preset_for(const config_t &config) {
-    return encode_budget::preset_for(config);
+    auto &guard = encode_budget::guard_state;
+    std::lock_guard lg {guard.mutex};
+    encode_budget::sync_with_config();
+    auto it = guard.next_preset.find(encode_budget::geometry(config));
+    return it == guard.next_preset.end() ? guard.configured_preset : it->second;
   }
 
   struct sync_session_t {
