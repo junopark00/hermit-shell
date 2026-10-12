@@ -1,6 +1,7 @@
 // Standalone checks for src/platform/cursor_shape.h (local cursor): the conversion of the three
-// Desktop Duplication pointer shape formats to BGRA32 with straight alpha, the FNV-1a shape id,
-// the 256x256 cap and the rejection of short buffers. Synthetic data only; no Windows API.
+// Desktop Duplication pointer shape formats to BGRA32 with straight alpha (including the white
+// fill and black outline that stand in for screen-inverting pixels), the FNV-1a shape id, the
+// 256x256 cap and the rejection of short buffers. Synthetic data only; no Windows API.
 //
 // Build and run from the repository root in MSYS2 UCRT64 (one line):
 //   g++ -std=c++20 -O1 -iquote src shell/tests/cursor_shape_test.cpp -o build/cursor_shape_test.exe
@@ -98,48 +99,119 @@ int main() {
 
   std::printf("masked colour shape\n");
   {
+    // One row: opaque colour | XOR white (inverts) | XOR black (leaves the screen: transparent) | XOR black
     cs::raw_t raw;
     raw.type = cs::type_masked_color;
-    raw.width = 2;
+    raw.width = 4;
     raw.height = 1;
-    raw.pitch = 8;
-    raw.data.assign(8, 0);
+    raw.pitch = 16;
+    raw.data.assign(16, 0);
     put_pixel(raw.data, raw.pitch, 0, 0, 0x00AABBCC);  // alpha 0: opaque colour
-    put_pixel(raw.data, raw.pitch, 1, 0, 0xFF010203);  // alpha FF: XOR with the screen
+    put_pixel(raw.data, raw.pitch, 1, 0, 0xFFFFFFFF);  // alpha FF, RGB FFFFFF: the screen inverted
+    put_pixel(raw.data, raw.pitch, 2, 0, 0xFF000000);  // alpha FF, RGB 0: XOR with 0, the screen unchanged
+    put_pixel(raw.data, raw.pitch, 3, 0, 0xFF000000);
 
     cs::bgra_t shape;
     check("converts", cs::convert(raw, shape) == cs::convert_e::ok);
     check("alpha 0 becomes opaque colour", pixel(shape, 0, 0) == 0xFFAABBCC);
-    check("XOR pixel becomes opaque mid-grey", pixel(shape, 1, 0) == cs::xor_approximation);
+    check("XOR with a colour becomes opaque white", pixel(shape, 1, 0) == cs::inverted_fill);
+    check("XOR with RGB 0 next to an inverted pixel is the black outline", pixel(shape, 2, 0) == cs::inverted_outline);
+    check("XOR with RGB 0 away from inverted pixels is transparent", pixel(shape, 3, 0) == 0x00000000);
+    check("opaque neighbour of an inverted pixel is not outlined", pixel(shape, 0, 0) == 0xFFAABBCC);
+
+    // A partial inversion (any non-zero RGB) counts as inverted
+    put_pixel(raw.data, raw.pitch, 1, 0, 0xFF010203);
+    check("XOR with a dim colour is inverted too", cs::convert(raw, shape) == cs::convert_e::ok && pixel(shape, 1, 0) == cs::inverted_fill);
   }
 
-  std::printf("monochrome shape\n");
+  std::printf("monochrome bit order\n");
   {
-    // 8x2 visible pixels: height is 4 rows (AND mask, then XOR mask), pitch 1 byte
+    // 8x1 visible pixels, pitch 1: AND 0x7F clears only bit 7, so pixel 0 (the MSB) is the one opaque pixel
     cs::raw_t raw;
     raw.type = cs::type_monochrome;
     raw.width = 8;
-    raw.height = 4;
+    raw.height = 2;
     raw.pitch = 1;
-    raw.hotspot_x = 3;
-    raw.hotspot_y = 0;
-    // Row 0: AND 0b00110011, XOR 0b01010101 -> black, white, grey, transparent pattern:
-    //   x0: and0 xor0 black; x1: and0 xor1 white; x2: and1 xor0 transparent; x3: and1 xor1 grey ...
-    // Row 1: AND 0xFF, XOR 0x00 -> all transparent
-    raw.data = {0x33, 0xFF, 0x55, 0x00};
+    raw.data = {0x7F, 0x00};  // AND row, XOR row
 
     cs::bgra_t shape;
     check("converts", cs::convert(raw, shape) == cs::convert_e::ok);
-    check("visible height is half the mask height", shape.width == 8 && shape.height == 2);
-    check("black", pixel(shape, 0, 0) == 0xFF000000);
-    check("white", pixel(shape, 1, 0) == 0xFFFFFFFF);
-    check("transparent", pixel(shape, 2, 0) == 0x00000000);
-    check("inverted becomes grey", pixel(shape, 3, 0) == cs::xor_approximation);
-    check("pattern repeats", pixel(shape, 4, 0) == 0xFF000000 && pixel(shape, 7, 0) == cs::xor_approximation);
-    check("second row transparent", pixel(shape, 0, 1) == 0 && pixel(shape, 7, 1) == 0);
-    check("hotspot kept", shape.hotspot_x == 3 && shape.hotspot_y == 0);
+    check("visible height is half the mask height", shape.width == 8 && shape.height == 1);
+    check("pixel 0 is the MSB: AND 0 XOR 0 is black", pixel(shape, 0, 0) == 0xFF000000);
+    check("pixel 7 is the LSB: AND 1 XOR 0 is transparent", pixel(shape, 7, 0) == 0x00000000);
+    check("no inverted pixel, no outline", pixel(shape, 1, 0) == 0x00000000);
 
-    raw.data.resize(3);
+    raw.data = {0xFE, 0x01};  // only pixel 7: AND 0 XOR 1 -> white
+    check("AND 0 XOR 1 is white", cs::convert(raw, shape) == cs::convert_e::ok && pixel(shape, 7, 0) == 0xFFFFFFFF && pixel(shape, 0, 0) == 0);
+    raw.data = {0xFF, 0x80};  // only pixel 0: AND 1 XOR 1 -> inverted
+    check("AND 1 XOR 1 is inverted (white) with a black outline", cs::convert(raw, shape) == cs::convert_e::ok && pixel(shape, 0, 0) == cs::inverted_fill && pixel(shape, 1, 0) == cs::inverted_outline && pixel(shape, 2, 0) == 0);
+  }
+
+  std::printf("monochrome I-beam\n");
+  {
+    // 16x16 visible pixels (32 mask rows, pitch 2). Everything is AND 1 (transparent) except row 15,
+    // whose pixels 0..7 are opaque: 0..3 black, 4..7 white. The XOR mask draws an I-beam of inverted
+    // pixels: serifs at x 5..10 on rows 1 and 14, the stem at x 7..8 on rows 2..13.
+    cs::raw_t raw;
+    raw.type = cs::type_monochrome;
+    raw.width = 16;
+    raw.height = 32;
+    raw.pitch = 2;
+    raw.hotspot_x = 7;
+    raw.hotspot_y = 7;
+    raw.data.assign(64, 0xFF);  // AND mask: all 1
+    raw.data[15 * 2] = 0x00;  // AND row 15: x 0..7 opaque
+    for (unsigned y = 0; y < 16; ++y) {  // XOR mask: rows 16..31
+      raw.data[32 + y * 2] = 0;
+      raw.data[32 + y * 2 + 1] = 0;
+    }
+    raw.data[32 + 1 * 2] = 0x07;  // row 1: x5, x6, x7
+    raw.data[32 + 1 * 2 + 1] = 0xE0;  // row 1: x8, x9, x10
+    for (unsigned y = 2; y <= 13; ++y) {
+      raw.data[32 + y * 2] = 0x01;  // x7
+      raw.data[32 + y * 2 + 1] = 0x80;  // x8
+    }
+    raw.data[32 + 14 * 2] = 0x07;
+    raw.data[32 + 14 * 2 + 1] = 0xE0;
+    raw.data[32 + 15 * 2] = 0x0F;  // row 15: x 4..7 XOR 1 (with AND 0: white); x 0..3 XOR 0 (black)
+
+    cs::bgra_t shape;
+    check("converts", cs::convert(raw, shape) == cs::convert_e::ok);
+    check("size and hotspot", shape.width == 16 && shape.height == 16 && shape.hotspot_x == 7 && shape.hotspot_y == 7);
+
+    // Inverted pixels: opaque white
+    bool beam_white = true;
+    for (unsigned x = 5; x <= 10; ++x) {
+      beam_white = beam_white && pixel(shape, x, 1) == cs::inverted_fill && pixel(shape, x, 14) == cs::inverted_fill;
+    }
+    for (unsigned y = 2; y <= 13; ++y) {
+      beam_white = beam_white && pixel(shape, 7, y) == cs::inverted_fill && pixel(shape, 8, y) == cs::inverted_fill;
+    }
+    check("every inverted pixel is opaque white", beam_white);
+
+    // Transparent pixels 4-adjacent to the beam: opaque black
+    check("outline above the top serif", pixel(shape, 5, 0) == cs::inverted_outline && pixel(shape, 10, 0) == cs::inverted_outline);
+    check("outline left and right of the serif", pixel(shape, 4, 1) == cs::inverted_outline && pixel(shape, 11, 1) == cs::inverted_outline);
+    check("outline under the serif ends", pixel(shape, 5, 2) == cs::inverted_outline && pixel(shape, 10, 2) == cs::inverted_outline);
+    check("outline along the stem", pixel(shape, 6, 7) == cs::inverted_outline && pixel(shape, 9, 7) == cs::inverted_outline);
+    check("outline under the bottom serif", pixel(shape, 8, 15) == cs::inverted_outline && pixel(shape, 10, 15) == cs::inverted_outline);
+
+    // Transparent pixels only diagonal to the beam, or next to an outline pixel, stay transparent
+    check("diagonal neighbours stay transparent", pixel(shape, 4, 0) == 0 && pixel(shape, 11, 0) == 0 && pixel(shape, 4, 2) == 0 && pixel(shape, 11, 2) == 0 && pixel(shape, 11, 15) == 0);
+    check("the outline does not grow", pixel(shape, 4, 2) == 0 && pixel(shape, 5, 7) == 0 && pixel(shape, 3, 1) == 0);
+    check("far corner transparent", pixel(shape, 0, 0) == 0 && pixel(shape, 15, 15) == 0 && pixel(shape, 15, 7) == 0);
+
+    // Opaque pixels keep their colour even next to the beam
+    check("AND 0 XOR 0 is black", pixel(shape, 0, 15) == 0xFF000000 && pixel(shape, 3, 15) == 0xFF000000);
+    check("AND 0 XOR 1 is white", pixel(shape, 4, 15) == 0xFFFFFFFF && pixel(shape, 6, 15) == 0xFFFFFFFF);
+    check("opaque white under the beam is not outlined", pixel(shape, 7, 15) == 0xFFFFFFFF);
+
+    // Deterministic: the same masks give the same id
+    cs::bgra_t again;
+    cs::convert(raw, again);
+    check("id is stable", again.id == shape.id && again.pixels == shape.pixels);
+
+    raw.data.resize(63);
     check("short mask buffer rejected", cs::convert(raw, shape) == cs::convert_e::invalid);
   }
 

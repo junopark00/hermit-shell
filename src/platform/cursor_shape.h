@@ -19,13 +19,17 @@ namespace platf::cursor_shape {
   // DXGI_OUTDUPL_POINTER_SHAPE_TYPE values (dxgi1_2.h), repeated so this header needs no Windows headers.
   constexpr std::uint32_t type_monochrome = 1;  ///< AND mask over XOR mask, 1 bit per pixel, twice the visible height
   constexpr std::uint32_t type_color = 2;  ///< 32 bpp BGRA with straight alpha
-  constexpr std::uint32_t type_masked_color = 4;  ///< 32 bpp BGR; alpha 0xFF marks pixels that invert the screen
+  constexpr std::uint32_t type_masked_color = 4;  ///< 32 bpp BGR; alpha 0xFF marks pixels XORed with the screen
 
   constexpr std::uint32_t max_dimension = 256;  ///< wider or taller shapes are not sent to clients
   constexpr std::uint32_t bytes_per_pixel = 4;
-  /// Pixels that invert the screen (XOR) cannot be drawn by a static cursor; they become opaque
-  /// mid-grey, which stays visible on white and on black backgrounds.
-  constexpr std::uint32_t xor_approximation = 0xFF808080;
+  /// Pixels that invert the screen (XOR) cannot be drawn by a static cursor. They become opaque
+  /// white, and every transparent pixel 4-adjacent to one becomes opaque black (a one-pixel
+  /// outline), so the shape stays visible on light and on dark backgrounds; this is how remote
+  /// desktop clients approximate XOR cursors. Pixels that are already opaque are never outlined.
+  /// Both values are 0xAARRGGBB, i.e. the little-endian u32 of the B, G, R, A bytes.
+  constexpr std::uint32_t inverted_fill = 0xFFFFFFFF;
+  constexpr std::uint32_t inverted_outline = 0xFF000000;
 
   /// A pointer shape as Desktop Duplication reports it (DXGI_OUTDUPL_POINTER_SHAPE_INFO plus the buffer).
   struct raw_t {
@@ -79,9 +83,16 @@ namespace platf::cursor_shape {
     return hash ? hash : 1;
   }
 
-  /// Convert a raw shape to BGRA32 with straight alpha. Colour shapes are copied, masked colour and
+  /// Convert a raw shape to BGRA32 with straight alpha. Colour shapes are copied. Masked colour and
   /// monochrome shapes are flattened: opaque pixels keep their colour (black or white for
-  /// monochrome), transparent pixels get alpha 0 and screen-inverting pixels become xor_approximation.
+  /// monochrome), transparent pixels get alpha 0, and screen-inverting pixels become inverted_fill
+  /// with an inverted_outline on the transparent pixels around them.
+  ///
+  /// Monochrome (1 bpp, pixel 0 in the most significant bit, `pitch` bytes per row): rows [0, h)
+  /// are the AND mask and rows [h, 2h) the XOR mask; the screen shows (pixel AND and) XOR xor, so
+  /// AND 1 / XOR 0 is transparent, AND 0 / XOR 0 black, AND 0 / XOR 1 white, AND 1 / XOR 1 inverted.
+  /// Masked colour (32 bpp): alpha 0 is an opaque colour; alpha 0xFF XORs the colour with the
+  /// screen, which with RGB 0 leaves the screen unchanged (transparent) and otherwise inverts it.
   /// The hotspot is clamped into the shape.
   inline convert_e convert(const raw_t &raw, bgra_t &out) {
     const bool monochrome = raw.type == type_monochrome;
@@ -112,31 +123,51 @@ namespace platf::cursor_shape {
     shape.hotspot_y = static_cast<std::uint16_t>(std::min(raw.hotspot_y, height - 1));
     shape.pixels.resize(static_cast<std::size_t>(width) * height * bytes_per_pixel);
 
-    const std::uint8_t grey[4] = {
-      static_cast<std::uint8_t>(xor_approximation & 0xFF),
-      static_cast<std::uint8_t>((xor_approximation >> 8) & 0xFF),
-      static_cast<std::uint8_t>((xor_approximation >> 16) & 0xFF),
-      static_cast<std::uint8_t>(xor_approximation >> 24),
+    if (raw.type == type_color) {
+      for (std::uint32_t y = 0; y < height; ++y) {
+        std::memcpy(shape.pixels.data() + static_cast<std::size_t>(y) * width * bytes_per_pixel, raw.data.data() + static_cast<std::size_t>(y) * raw.pitch, row_bytes);
+      }
+      shape.id = shape_id(shape);
+      out = std::move(shape);
+      return convert_e::ok;
+    }
+
+    // Flattening: classify every pixel first, then outline. The outline looks at the classes, not
+    // at the pixels it writes, so it never grows from one pass to the next.
+    enum kind_e : std::uint8_t {
+      transparent,
+      opaque,
+      inverted,
+    };
+    std::vector<std::uint8_t> kind(static_cast<std::size_t>(width) * height, transparent);
+
+    auto write = [](std::uint8_t *dst, std::uint32_t argb) {
+      dst[0] = static_cast<std::uint8_t>(argb & 0xFF);
+      dst[1] = static_cast<std::uint8_t>((argb >> 8) & 0xFF);
+      dst[2] = static_cast<std::uint8_t>((argb >> 16) & 0xFF);
+      dst[3] = static_cast<std::uint8_t>(argb >> 24);
     };
 
     for (std::uint32_t y = 0; y < height; ++y) {
       const std::uint8_t *src_row = raw.data.data() + static_cast<std::size_t>(y) * raw.pitch;
       std::uint8_t *dst_row = shape.pixels.data() + static_cast<std::size_t>(y) * width * bytes_per_pixel;
-
-      if (raw.type == type_color) {
-        std::memcpy(dst_row, src_row, row_bytes);
-        continue;
-      }
+      std::uint8_t *kind_row = kind.data() + static_cast<std::size_t>(y) * width;
 
       if (raw.type == type_masked_color) {
         for (std::uint32_t x = 0; x < width; ++x) {
           const std::uint8_t *src = src_row + static_cast<std::size_t>(x) * bytes_per_pixel;
           std::uint8_t *dst = dst_row + static_cast<std::size_t>(x) * bytes_per_pixel;
           if (src[3] == 0xFF) {
-            // XOR pixel: the screen colour inverted
-            std::memcpy(dst, grey, 4);
+            // XOR pixel: RGB 0 leaves the screen as it is, anything else inverts it
+            if ((src[0] | src[1] | src[2]) == 0) {
+              write(dst, 0);
+            } else {
+              kind_row[x] = inverted;
+              write(dst, inverted_fill);
+            }
           } else {
             // Opaque colour (alpha 0; other values are not legal and are treated the same way)
+            kind_row[x] = opaque;
             dst[0] = src[0];
             dst[1] = src[1];
             dst[2] = src[2];
@@ -146,7 +177,7 @@ namespace platf::cursor_shape {
         continue;
       }
 
-      // Monochrome: AND mask rows first, XOR mask rows after them
+      // Monochrome: AND mask rows first, XOR mask rows after them, pixel 0 in the MSB of each byte
       const std::uint8_t *and_row = src_row;
       const std::uint8_t *xor_row = raw.data.data() + static_cast<std::size_t>(y + height) * raw.pitch;
       for (std::uint32_t x = 0; x < width; ++x) {
@@ -156,13 +187,31 @@ namespace platf::cursor_shape {
         std::uint8_t *dst = dst_row + static_cast<std::size_t>(x) * bytes_per_pixel;
         if (!and_bit) {
           // Opaque: black when the XOR bit is clear, white when it is set
-          const std::uint8_t v = xor_bit ? 0xFF : 0x00;
-          dst[0] = dst[1] = dst[2] = v;
-          dst[3] = 0xFF;
+          kind_row[x] = opaque;
+          write(dst, xor_bit ? 0xFFFFFFFFu : 0xFF000000u);
         } else if (xor_bit) {
-          std::memcpy(dst, grey, 4);
+          kind_row[x] = inverted;
+          write(dst, inverted_fill);
         } else {
-          dst[0] = dst[1] = dst[2] = dst[3] = 0;
+          write(dst, 0);
+        }
+      }
+    }
+
+    // Outline: a transparent pixel with an inverted 4-neighbour becomes opaque black
+    for (std::uint32_t y = 0; y < height; ++y) {
+      for (std::uint32_t x = 0; x < width; ++x) {
+        const std::size_t i = static_cast<std::size_t>(y) * width + x;
+        if (kind[i] != transparent) {
+          continue;
+        }
+        const bool next_to_inverted =
+          (x > 0 && kind[i - 1] == inverted) ||
+          (x + 1 < width && kind[i + 1] == inverted) ||
+          (y > 0 && kind[i - width] == inverted) ||
+          (y + 1 < height && kind[i + width] == inverted);
+        if (next_to_inverted) {
+          write(shape.pixels.data() + i * bytes_per_pixel, inverted_outline);
         }
       }
     }

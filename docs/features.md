@@ -316,8 +316,10 @@ report pointer shapes.
   fetches it with `?shape=<id>` and keeps showing the previous shape meanwhile.
 - **Conversion.** Colour pointers are sent as captured. Monochrome (AND/XOR) and masked colour pointers
   are flattened to straight alpha; pixels that would invert the screen (the I-beam over text, for
-  example) cannot be drawn by a static cursor and become opaque mid-grey (`#808080`), which stays
-  visible on light and dark backgrounds. Shapes wider or taller than 256 pixels are not sent (one
+  example) cannot be drawn by a static cursor and become opaque white with a one-pixel black
+  outline on the transparent pixels around them, the usual remote-desktop stand-in for XOR cursors,
+  which stays visible on light and dark backgrounds (a masked-colour XOR pixel with RGB 0 leaves the
+  screen unchanged and is transparent). Shapes wider or taller than 256 pixels are not sent (one
   warning in the log; the client shows its default arrow).
 - **Rates.** Per session at most 20 `CURSOR_SHAPE` and 60 `CURSOR_STATE` messages per second; a
   visibility or composing change is never held back by either limit: while a new shape waits, such a
