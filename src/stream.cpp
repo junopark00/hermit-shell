@@ -62,6 +62,8 @@ extern "C" {
 #define IDX_SET_CLIPBOARD 16
 #define IDX_FILE_TRANSFER_NONCE_REQUEST 17
 #define IDX_SET_ADAPTIVE_TRIGGERS 18
+#define IDX_CURSOR_SHAPE 19
+#define IDX_CURSOR_STATE 20
 
 static const short packetTypes[] = {
   0x0305,  // Start A
@@ -83,6 +85,8 @@ static const short packetTypes[] = {
   0x3001,  // Set Clipboard (Apollo protocol extension)
   0x3002,  // File transfer nonce request (Apollo protocol extension)
   0x5503,  // Set Adaptive triggers (Sunshine protocol extension)
+  0x3100,  // Cursor shape (Shell protocol extension, local cursor)
+  0x3101,  // Cursor state (Shell protocol extension, local cursor)
 };
 
 namespace asio = boost::asio;
@@ -472,13 +476,7 @@ namespace stream {
    * returns empty string_view on failure
    * returns string_view pointing to payload data
    */
-  template<std::size_t max_payload_size>
-  static inline std::string_view encode_control(session_t *session, const std::string_view &plaintext, std::array<std::uint8_t, max_payload_size> &tagged_cipher) {
-    static_assert(
-      max_payload_size >= sizeof(control_encrypted_t) + sizeof(crypto::cipher::tag_size),
-      "max_payload_size >= sizeof(control_encrypted_t) + sizeof(crypto::cipher::tag_size)"
-    );
-
+  static inline std::string_view encode_control_into(session_t *session, const std::string_view &plaintext, std::uint8_t *tagged_cipher) {
     if (session->config.controlProtocolType != 13) {
       return plaintext;
     }
@@ -506,7 +504,7 @@ namespace stream {
       iv[0] = (std::uint8_t) seq;
     }
 
-    auto packet = (control_encrypted_p) tagged_cipher.data();
+    auto packet = (control_encrypted_p) tagged_cipher;
 
     auto bytes = session->control.cipher.encrypt(plaintext, packet->payload(), &iv);
     if (bytes <= 0) {
@@ -520,7 +518,27 @@ namespace stream {
     packet->length = util::endian::little(packet_length);
     packet->seq = util::endian::little(seq);
 
-    return std::string_view {(char *) tagged_cipher.data(), packet_length + sizeof(control_encrypted_t) - sizeof(control_encrypted_t::seq)};
+    return std::string_view {(char *) tagged_cipher, packet_length + sizeof(control_encrypted_t) - sizeof(control_encrypted_t::seq)};
+  }
+
+  template<std::size_t max_payload_size>
+  static inline std::string_view encode_control(session_t *session, const std::string_view &plaintext, std::array<std::uint8_t, max_payload_size> &tagged_cipher) {
+    static_assert(
+      max_payload_size >= sizeof(control_encrypted_t) + sizeof(crypto::cipher::tag_size),
+      "max_payload_size >= sizeof(control_encrypted_t) + sizeof(crypto::cipher::tag_size)"
+    );
+
+    return encode_control_into(session, plaintext, tagged_cipher.data());
+  }
+
+  /**
+   * @brief Shell: encode_control for messages whose size is only known at run time (cursor shapes).
+   *        The vector is resized to fit; the returned view points into it (or at the plaintext
+   *        when the control stream is not encrypted).
+   */
+  static inline std::string_view encode_control(session_t *session, const std::string_view &plaintext, std::vector<std::uint8_t> &tagged_cipher) {
+    tagged_cipher.resize(sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(plaintext.size()) + crypto::cipher::tag_size);
+    return encode_control_into(session, plaintext, tagged_cipher.data());
   }
 
   int start_broadcast(broadcast_ctx_t &ctx);
@@ -969,6 +987,122 @@ namespace stream {
     return 0;
   }
 
+  // Shell: local cursor messages (docs/features.md "Local cursor")
+  constexpr std::size_t cursor_sent_ids_max = 32;  ///< shapes a client is assumed to hold (per session)
+  /// Pixel bytes per CURSOR_SHAPE message. The encrypted control packet carries a 16-bit length, so a
+  /// shape of more than about 16k pixels goes out in several messages with increasing offsets.
+  constexpr std::size_t cursor_shape_chunk_bytes = 61440;
+  constexpr auto cursor_shape_interval = 50ms;  ///< at most 20 shapes per second per session
+  constexpr auto cursor_state_interval = 16ms;  ///< at most 60 state messages per second per session (visibility changes are exempt)
+
+  /**
+   * @brief Shell: send one local cursor message (control thread, the peer is connected).
+   * @param type packetTypes[IDX_CURSOR_SHAPE] or packetTypes[IDX_CURSOR_STATE].
+   * @param payload The message after the 4-byte control header (cursor_shape::wire).
+   * @param encrypted Scratch buffer, reused between calls.
+   * @return 0 on success.
+   */
+  int send_cursor_message(session_t *session, std::uint16_t type, const std::vector<std::uint8_t> &payload, std::vector<std::uint8_t> &encrypted) {
+    control_header_v2 header {};
+    header.type = type;
+    header.payloadLength = static_cast<std::uint16_t>(payload.size());
+
+    std::vector<std::uint8_t> plaintext;
+    plaintext.reserve(sizeof(header) + payload.size());
+    plaintext.insert(plaintext.end(), (const std::uint8_t *) &header, (const std::uint8_t *) &header + sizeof(header));
+    plaintext.insert(plaintext.end(), payload.begin(), payload.end());
+
+    auto packet = encode_control(session, std::string_view {(const char *) plaintext.data(), plaintext.size()}, encrypted);
+    if (packet.empty()) {
+      return -1;
+    }
+    if (session->broadcast_ref->control_server.send(packet, session->control.peer)) {
+      TUPLE_2D(port, addr, platf::from_sockaddr_ex((sockaddr *) &session->control.peer->address.address));
+      BOOST_LOG(warning) << "Couldn't send cursor message to ["sv << addr << ':' << port << ']';
+      return -1;
+    }
+    return 0;
+  }
+
+  int send_cursor_shape(session_t *session, const platf::cursor_shape::bgra_t &shape) {
+    std::vector<std::uint8_t> payload, encrypted;
+    for (std::size_t offset = 0; offset < shape.pixels.size(); offset += cursor_shape_chunk_bytes) {
+      payload.clear();
+      platf::cursor_shape::wire::append_shape(payload, shape, static_cast<std::uint32_t>(offset), std::min(cursor_shape_chunk_bytes, shape.pixels.size() - offset));
+      if (send_cursor_message(session, packetTypes[IDX_CURSOR_SHAPE], payload, encrypted)) {
+        return -1;
+      }
+    }
+    BOOST_LOG(debug) << "Sent cursor shape " << shape.id << " (" << shape.width << 'x' << shape.height << ") to [" << session->device_name << ']';
+    return 0;
+  }
+
+  int send_cursor_state(session_t *session, std::uint32_t shape_id, bool visible, bool host_composing) {
+    std::vector<std::uint8_t> payload, encrypted;
+    platf::cursor_shape::wire::append_state(payload, shape_id, visible, host_composing);
+    return send_cursor_message(session, packetTypes[IDX_CURSOR_STATE], payload, encrypted);
+  }
+
+  /**
+   * @brief Shell: bring one session that asked for a local cursor up to date with the cursor bus
+   *        (control thread, session list locked, peer connected). A shape the client does not hold
+   *        yet goes out as CURSOR_SHAPE (at most one per cursor_shape_interval), every change of
+   *        shape, visibility or host composing as CURSOR_STATE (animation frames at most one per
+   *        cursor_state_interval). Whatever is skipped is caught up on a later pass with the newest
+   *        bus contents, so the newest state always wins.
+   */
+  void relay_cursor(session_t *session, const platf::cursor_bus::snapshot_t &bus, bool host_composing, std::chrono::steady_clock::time_point now) {
+    auto &c = session->cursor;
+
+    const bool force = c.resync.exchange(false, std::memory_order_acquire);
+    if (force) {
+      c.shape_gen = 0;
+      c.state_gen = 0;
+    }
+
+    const std::uint32_t id = bus.shape ? bus.shape->id : 0;
+    bool state_due = force || c.state_gen != bus.state_gen || id != c.shape_id || host_composing != c.composing;
+
+    if (c.shape_gen != bus.shape_gen) {
+      auto known = std::find(c.sent_ids.begin(), c.sent_ids.end(), id);
+      if (id != 0 && known == c.sent_ids.end()) {
+        if (now - c.shape_sent_at < cursor_shape_interval) {
+          return;  // rate limit: the next pass sends whatever shape is current then
+        }
+        if (send_cursor_shape(session, *bus.shape)) {
+          return;
+        }
+        c.shape_sent_at = now;
+        c.sent_ids.push_back(id);
+        if (c.sent_ids.size() > cursor_sent_ids_max) {
+          c.sent_ids.pop_front();
+        }
+      } else if (id != 0) {
+        // Most recently used goes to the back
+        c.sent_ids.erase(known);
+        c.sent_ids.push_back(id);
+      }
+      c.shape_gen = bus.shape_gen;
+      state_due = true;
+    }
+
+    if (!state_due) {
+      return;
+    }
+    const bool visibility_change = force || bus.visible != c.visible || host_composing != c.composing;
+    if (!visibility_change && now - c.state_sent_at < cursor_state_interval) {
+      return;  // animated cursor: the next pass sends the newest frame
+    }
+    if (send_cursor_state(session, id, bus.visible, host_composing)) {
+      return;
+    }
+    c.state_sent_at = now;
+    c.state_gen = bus.state_gen;
+    c.shape_id = id;
+    c.visible = bus.visible;
+    c.composing = host_composing;
+  }
+
   /**
    * @brief Shell: decide whether the capture draws the cursor into the video (local cursor). It is
    *        left out only while every session asked for a local cursor; one session that did not
@@ -1198,11 +1332,16 @@ namespace stream {
     auto broadcast_shutdown_event = mail::man->event<bool>(mail::broadcast_shutdown);
     while (!shutdown_event->peek() && !broadcast_shutdown_event->peek()) {
       bool has_session_awaiting_peer = false;
+      bool cursor_relay_active = false;  // Shell: a session draws the cursor itself; poll the bus often
 
       {
         auto lg = server->_sessions.lock();
 
         auto now = std::chrono::steady_clock::now();
+
+        // Shell: local cursor; the bus is read once per pass and only when a session asked
+        const bool host_composing = update_cursor_compose(*server->_sessions);
+        std::optional<platf::cursor_bus::snapshot_t> cursor_bus_snapshot;
 
         KITTY_WHILE_LOOP(auto pos = std::begin(*server->_sessions), pos != std::end(*server->_sessions), {
           // Don't perform additional session processing if we're shutting down
@@ -1264,6 +1403,15 @@ namespace stream {
 
               send_hdr_mode(session, std::move(hdr_info));
             }
+
+            // Shell: local cursor
+            if (session->control.peer && session->cursor.requested.load(std::memory_order_relaxed)) {
+              cursor_relay_active = true;
+              if (!cursor_bus_snapshot) {
+                cursor_bus_snapshot = platf::cursor_bus::snapshot();
+              }
+              relay_cursor(session, *cursor_bus_snapshot, host_composing, now);
+            }
           }
 
           ++pos;
@@ -1279,7 +1427,9 @@ namespace stream {
         break;
       }
 
-      server->iterate(150ms);
+      // Shell: while a client draws the cursor itself, shape and visibility changes must not wait
+      // for the next incoming packet or the 150 ms timeout
+      server->iterate(cursor_relay_active ? 10ms : 150ms);
     }
 
     // Let all remaining connections know the server is shutting down

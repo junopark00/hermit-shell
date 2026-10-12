@@ -163,6 +163,11 @@ Settings specific to Shell:
   the encoder uses and warns (log, dashboard, session history) when a stream stays above 65% for
   10 seconds. `notify` (default) only warns; `adjust` also starts the next stream at that resolution
   and frame rate one NVENC preset faster. A running stream is never changed.
+- **Local cursor** (`local_cursor`): clients that ask for it (Hermit in remote desktop mouse mode)
+  draw the mouse cursor themselves. Shell sends the pointer's shape and visibility over the control
+  connection and leaves the pointer out of the video while every connected client asks, so the cursor
+  follows the mouse without the streaming delay. `auto` (default) offers it; `off` never does. Clients
+  that do not ask see no change. Needs the Desktop Duplication capture method.
 
 See [docs/features.md](docs/features.md) for the details of each feature.
 

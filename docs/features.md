@@ -256,6 +256,77 @@ client, its own stream only).
 - Reply: `bitrate=<encoding kbps>`. `403` when the client is not streaming, `501` for other encoders
   (the client then reconnects with the new bitrate).
 
+## Local cursor
+
+In remote desktop mouse mode the cursor in the video trails the mouse by the capture interval, the
+encode, the network and the client's V-Sync (about 25 to 40 ms at 60 fps). A client that supports the
+local cursor draws the mouse pointer itself with the operating system's cursor: Shell sends the
+pointer's **shape, hotspot and visibility** (never its position, which the client knows) over the
+control connection and leaves the pointer out of the captured video. The picture keeps its delay, the
+cursor does not.
+
+Nothing changes for clients that do not ask for it: stock Moonlight, Hermit in game mouse mode and
+older Hermit versions keep seeing the cursor in the video exactly as before. The feature needs the
+Desktop Duplication capture method (`capture = ddx` or automatic); Windows.Graphics.Capture does not
+report pointer shapes.
+
+- `local_cursor` (**Settings > Advanced > Local cursor**, Windows): `auto` (default) offers it to
+  clients that ask; `off` never does, and the cursor is always drawn into the video.
+- `serverinfo` over HTTPS carries `LocalCursor` = the newest protocol version the host speaks (`1`)
+  unless the setting is `off`. The plain-HTTP `serverinfo` never carries it.
+- `GET /actions/cursor` (HTTPS, paired client with the view permission, its own running stream):
+  - `mode=local&v=1` asks for the local cursor; `mode=host` returns to the default. Hermit calls it
+    once its control connection is up, on every mouse mode toggle, and when its setting changes;
+    a session that ends is reset by the host. Reply `mode=local` or `mode=host`, the latter with
+    `reason=off` (setting) or `reason=version` (`v` newer than the host supports) when the host
+    declines; `403` when the client is not streaming; `409` when the capture backend does not report
+    pointer shapes (WGC). Older Shell versions answer `404`, which the client treats as "unsupported".
+  - `shape=<id>` returns the current pointer shape when its id matches, as one `CURSOR_SHAPE` payload
+    (below, `offset` 0 and all pixels, `application/octet-stream`), else `404`. Clients use it when a
+    `CURSOR_STATE` names a shape they do not hold.
+- **Composing rule.** One capture thread serves every session, so the pointer can only be left out
+  of the video for everyone at once. It is left out while *every* session asked for the local cursor;
+  as soon as one session did not (a phone in touch mode, stock Moonlight), the pointer is drawn into
+  the video for all of them and the sessions that asked are told so with `host_composing=1` (they then
+  hide their own cursor and see the host's). The decision is recomputed whenever a session starts,
+  ends or changes its mode.
+- **Messages** (control stream, host to client, AES-GCM encrypted like every other message, reliable
+  and in order on channel 0; all integers little-endian; only to sessions that asked):
+  - `0x3100 CURSOR_SHAPE`: `version u8` (1), `shape_id u32`, `width u16`, `height u16`, `hotspot_x u16`,
+    `hotspot_y u16`, `offset u32`, then the pixel bytes `[offset, offset + n)` of the image, `n` being
+    the rest of the message. Pixels are top-down rows of B, G, R, A with straight (not premultiplied)
+    alpha, `width * height * 4` bytes in all, each dimension 1 to 256, hotspot inside the shape. The
+    encrypted control packet has a 16-bit length, so an image larger than 61,440 bytes (about 124x124)
+    arrives in several messages with increasing `offset` and the same header; it is complete when
+    `offset + n == width * height * 4`.
+  - `0x3101 CURSOR_STATE`: `version u8` (1), `shape_id u32`, `visible u8` (0/1), `host_composing u8`
+    (0/1). `shape_id` 0 means "no shape" (the client shows its default arrow; this happens before the
+    first shape was captured or when the shape is larger than 256x256). The client ignores messages
+    whose `version` is not 1.
+- **Shape ids and caching.** `shape_id` is the 32-bit FNV-1a hash of `width`, `height`, `hotspot_x`,
+  `hotspot_y` (each as a little-endian u16, in that order) followed by the pixel bytes; 0 is mapped
+  to 1. Shell remembers the last 32 ids it sent to a session and sends only `CURSOR_STATE` for a shape
+  the client already holds, so an animated cursor costs one `CURSOR_SHAPE` per frame in its first cycle
+  and short states afterwards. A client that receives an unknown id fetches it with `?shape=<id>` and
+  keeps showing the previous shape meanwhile.
+- **Conversion.** Colour pointers are sent as captured. Monochrome (AND/XOR) and masked colour pointers
+  are flattened to straight alpha; pixels that would invert the screen (the I-beam over text, for
+  example) cannot be drawn by a static cursor and become opaque mid-grey (`#808080`), which stays
+  visible on light and dark backgrounds. Shapes wider or taller than 256 pixels are not sent (one
+  warning in the log; the client shows its default arrow).
+- **Rates.** Per session at most 20 `CURSOR_SHAPE` and 60 `CURSOR_STATE` messages per second; a
+  visibility change is never held back by the state limit. When the limit holds a message back, the
+  newest shape or state goes out on the next pass, never a stale one. While a session uses the local
+  cursor the control thread wakes every 10 ms instead of waiting up to 150 ms for the next packet.
+- **Mode change.** On `mode=local` the host immediately sends the current shape (or only the state when
+  the client holds it) and state. A capture restart (resolution change) delivers the pointer shape
+  again and the host repeats the state with its id.
+- The log notes every change (`Cursor for [Tablet]: local; host composing: no`). `GET /api/shell/live`
+  session entries carry `cursor` (`local` or `host`) and `cursor_composing` (whether the host still
+  draws the pointer into the video); the dashboard's video detail names the mode. The
+  [session record](#session-history) carries `cursor`: `local` when the client drew the cursor itself
+  at any time.
+
 ## Remote shutdown, restart, sleep and hibernation
 
 In Hermit, right-click the PC in the PC list (long-press on Android) and choose to shut it down,
@@ -472,6 +543,7 @@ swapped in). A failure to write is logged and never affects streaming.
 | `end_reason` | `disconnect` (the client closed the connection), `timeout` (no answer), `host` (stopped on the host, including a revoked view permission), `app_exit` (the app ended), `client_quit` (the client asked to quit the app); omitted when unknown |
 | `encode_budget_max_pct` | Highest per-second encode time of the session as a percentage of the frame interval (see [Encode time guard](#encode-time-guard)); omitted when no full second was measured |
 | `encode_budget_exceeded` | `true` when the encoder stayed above 65% of the frame interval for 10 seconds at any time; omitted with `encode_budget_max_pct` |
+| `cursor` | `local` when the client drew the mouse cursor itself at any time (see [Local cursor](#local-cursor)), else `host` |
 
 A network loss can also end as `disconnect` when the control connection times out first, so
 `disconnect` does not always mean a clean exit.
