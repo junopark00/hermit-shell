@@ -224,10 +224,15 @@ namespace confighttp {
       html += pair("li",
                    "Or ask the owner of the PC to set <b>Settings &gt; Network &gt; Web UI Access</b> (<code>origin_web_ui_allowed</code>) to <code>lan</code> (this PC and the local network) and restart Shell.",
                    "또는 PC 소유자에게 <b>설정 &gt; 네트워크 &gt; 웹 UI 접근 허용 범위</b>(<code>origin_web_ui_allowed</code>)를 <code>lan</code>(이 PC와 로컬 네트워크)으로 바꾸고 Shell을 다시 시작해 달라고 하세요.");
-    } else {
+    } else if (allowed == net::PC) {
       html += pair("li",
                    "Or connect this device to the PC's local network first (a Tailscale connection counts as local) and open the page again. The web UI must then allow the local network: <b>Settings &gt; Network &gt; Web UI Access</b> (<code>origin_web_ui_allowed</code>) set to <code>lan</code>, followed by a restart of Shell.",
                    "또는 이 기기를 먼저 PC의 로컬 네트워크에 연결하고(Tailscale 연결도 로컬로 취급됩니다) 페이지를 다시 여세요. 그때 웹 UI가 로컬 네트워크를 허용해야 합니다: <b>설정 &gt; 네트워크 &gt; 웹 UI 접근 허용 범위</b>(<code>origin_web_ui_allowed</code>)를 <code>lan</code>으로 바꾼 뒤 Shell 다시 시작.");
+    } else {
+      // The local network is allowed already: being on it is all that is needed
+      html += pair("li",
+                   "Or connect this device to the PC's local network first (a Tailscale connection counts as local) and open the page again.",
+                   "또는 이 기기를 먼저 PC의 로컬 네트워크에 연결하고(Tailscale 연결도 로컬로 취급됩니다) 페이지를 다시 여세요.");
     }
     html += "</ol>\n<div class=\"note\">\n";
     html += pair("p",
