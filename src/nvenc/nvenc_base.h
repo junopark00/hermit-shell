@@ -148,8 +148,8 @@ namespace nvenc {
       NV_ENC_BUFFER_FORMAT buffer_format = NV_ENC_BUFFER_FORMAT_UNDEFINED;
       uint32_t ref_frames_in_dpb = 0;
       bool rfi = false;
-      int engines = 0;  // Shell: encoder_engines()
-      int quality_preset = 0;  // Shell: quality_preset()
+      int engines = 0;  // Shell: 0 = unknown
+      int quality_preset = 0;  // Shell: 0 = not created yet
     } encoder_params;
 
     std::string last_nvenc_error_string;
