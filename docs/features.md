@@ -133,6 +133,102 @@ editor.
   browser; the page fills the fields from it, focuses the **Pair** button and removes the fragment from
   the address (so a reload starts clean). Nothing is sent until the user presses **Pair**.
 
+### QR pairing
+
+**Pair with QR** on the same page creates a QR code that a Hermit client uses to pair in one step: no
+PIN, no device name to type, the certificate pinned from the first contact, and the permissions
+chosen beside the PIN applied. Hermit for Android scans the code; Hermit on the host PC takes the
+same link pasted into its "add PC" field. Standard PIN pairing is unchanged, and a QR code exists
+only after a signed-in administrator creates one.
+
+**Link.** `hermit://pair?v=1&host=<host>&port=<HTTP port>&fp=<64 hex>&token=<26 base32>&name=<name>`,
+keys in this order, RFC 3986 percent-encoding, at most 320 bytes (`name` is cut first).
+
+| Key | Value |
+|---|---|
+| `v` | `1`; a client refuses other values |
+| `host` | An IPv4 address, a bracketed IPv6 address or a host name (no zone id). The page offers the host's LAN and Tailscale IPv4 addresses (`GET /api/pair/qr/hosts`), the first one by default; another address can be typed |
+| `port` | The HTTP port (47989 by default); the client reads the HTTPS port from `serverinfo` |
+| `fp` | SHA-256 of the DER server certificate, 64 lower-case hex characters (what `openssl x509 -fingerprint -sha256` prints, without colons). The client compares it with the certificate it receives and stops before the challenge on a mismatch |
+| `token` | 16 random bytes as 26 upper-case base32 characters (RFC 4648, no padding). It is the one-time secret and stands in for the PIN |
+| `name` | The host name (**Host Name** in Settings), at most 32 characters, display only |
+
+The link carries no permissions (they stay in the host's record, so a changed link cannot raise
+them), no PIN, no credentials and no expiry (the host keeps the time).
+
+**Record.** The host keeps one QR record, in memory only (not in `shell_state.json`; a restart drops
+it): the token, its id, the permissions, the creation time and the state `pending`, `in_use` (a
+device is pairing with it, bound to that device's uniqueid and address), `used` or `expired`.
+Creating a new code replaces the previous one; a device still pairing with the old one is answered
+"Superseded by a new QR code". The record id is `SHA-256("hermit-qr-id" ‖ token)`, first 16 hex
+characters; the client computes it from the token and sends only the id over plain HTTP, never the
+token.
+
+**Protocol.** The client first reads `serverinfo` over HTTP: a host with QR pairing answers
+`<qrPairing>1</qrPairing>` (HTTP and HTTPS, public like the rest of the HTTP `serverinfo`). Without
+it the client stops before any pairing request ("update the host"). It then sends `/pair`
+getservercert with `qr=<id>` and its real `devicename`, and the token in place of the PIN in its key
+derivation (`SHA-256(salt ‖ PIN)` takes any length, so nothing changes in the key derivation on
+either side). The host checks the record in this order and answers the first failure as a failed
+pairing (`status_code` 400, `paired` 0) whose `status_message` starts with `QR_<reason>: ` and which
+carries the attribute `qr_reason`; clients map the prefix to their own text:
+
+| Order | Check | `qr_reason` | `status_message` |
+|---|---|---|---|
+| 1 | No record, or another id | `none` | `QR_none: No QR pairing is pending; create one in the web UI` |
+| 2 | The client address is not local (`net::from_address` says WAN) | `network` | `QR_network: QR pairing is accepted from the local network only` |
+| 3 | More than 120 seconds since the code was created | `expired` | `QR_expired: QR code expired; create a new one` |
+| 4 | Already used, or in use from another address | `used` | `QR_used: QR code already used; create a new one` |
+
+A wrong id and a WAN address learn nothing about the record (they are answered before its state is
+looked at). When the checks pass, the record becomes `in_use`, bound to the device's uniqueid and
+address, and the host answers getservercert at once with the token as the PIN: no PIN wait, no tray
+notification. The rest of the pairing (clientchallenge, serverchallengeresp, clientpairingsecret,
+the HTTPS `pairchallenge`) is unchanged; when it succeeds the device is stored with the record's
+permissions and the record becomes `used`. A pairing that fails (a damaged token, a dropped
+connection, `/unpair` from the device) hands the record back as `pending`, so a retry within the 120
+seconds works. `enable_pairing = false` turns QR pairing off with the rest: `POST /api/pair/qr`
+answers 403, `/pair` as before.
+
+**Address binding.** The uniqueid and the record id travel over plain HTTP, so a QR session can be
+replaced, continued or cancelled only from the address it started from: a getservercert (with or
+without `qr=`), a later pairing phase or `/unpair` with that uniqueid from another address is answered
+`QR_used` (or, for `/unpair`, the usual 400) and changes nothing. Two devices behind one shared
+address are not told apart; the 120-second window and the device list limit what that allows.
+
+**Lifetime.** A QR session that stalls after getservercert (the client stopped at a certificate
+mismatch and its `/unpair` was lost) is dropped when the record's 120 seconds end, and the record
+becomes `expired`. The pairing limit per address applies to QR pairing as to PIN pairing, with the
+same message.
+
+**Web API** (web UI login required; all four answer with `Cache-Control: no-store`):
+
+| Request | Body | Reply |
+|---|---|---|
+| `POST /api/pair/qr` | `{"perm": <uint32>, "host": "192.168.0.10"}` (`perm` as for `/api/pin`) | `{"status": true, "link": "hermit://pair?...", "expires_in": 120}`; the link is returned here once and never again. 403 when pairing is disabled, 400 for a bad `host` |
+| `GET /api/pair/qr` | — | `{"status": true, "state": "none\|pending\|in_use\|used\|expired", "remaining": <seconds>, "paired_name": "<device>"}`. No token, link or id. `used` with the device's name is shown for 60 seconds after the pairing |
+| `GET /api/pair/qr/hosts` | — | `{"status": true, "hosts": ["192.168.0.10", "100.64.1.2"]}`: LAN and Tailscale IPv4 addresses of the host, private ranges first, without loopback and link-local addresses |
+| `DELETE /api/pair/qr` | — | `{"status": true, "cancelled": <bool>}`; drops the record and the sessions bound to it |
+
+The page draws the code with the bundled `qrcode-generator` library (MIT, no dependencies, no
+network), shows a 120-second countdown and the link with a **Copy** button, polls the state every
+2 seconds and, once `used`, shows the device's name (as text) and reloads the device list. The token
+is shown once, in the code and the link, and is not kept by the page once the record ends.
+
+**Log.** "QR pairing created from [addr] with preset all|stream|view|custom, expires in 120 s",
+"QR pairing started for [name] from [addr]", "QR pairing completed for [name] from [addr]",
+"QR pairing refused from [addr]: <reason>", expiry and cancellation, all at info level. The token
+and the link are never logged at any level; the id may appear in the debug-level request dump.
+
+**Security notes.** The token has 128 bits, so the offline guessing that a 4-digit PIN allows is
+pointless, and the host hands nothing over without the token (a device that starts pairing at the
+same moment cannot take a PIN meant for another). A photo or screen capture of the code is usable
+only within 120 seconds, from a local or Tailscale address, and only once; a pairing it makes shows
+up on the page and in the device list, where it can be removed. Do not send the link by message or
+e-mail; copy it only to paste into Hermit on the host PC (Windows' clipboard history and cloud sync
+can keep it). Clients that do not know `qr=` (Moonlight) are unaffected: without it `/pair` runs the
+PIN flow. Hosts before Shell 1.3.0 have no `qrPairing` in `serverinfo`, and the clients stop there.
+
 ## Virtual display
 
 Shell uses the SudoVDA driver to create a virtual display for a session, at the resolution and refresh

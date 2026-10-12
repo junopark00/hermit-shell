@@ -101,6 +101,10 @@ Apollo is disabled, not deleted; see [docs/tools.md](docs/tools.md#migrating-fro
    toggles. The page remembers the last choice. The client waits about 5 minutes for the PIN; after
    that, start pairing again on the client.
 
+Hermit clients can also pair without a PIN: **Pair with QR** on the same page makes a one-time QR code
+(120 seconds, local network and Tailscale only) that Hermit for Android scans, or whose link is pasted
+into Hermit on the host PC; see [docs/features.md](docs/features.md#qr-pairing).
+
 The permissions of a paired device can be changed at any time under **Device Management** on the same
 page. Hermit and Hermit for Android open the Pairing page with the PIN and device name already filled
 in; you only check the permissions and press **Pair**. If the browser shows **The web UI is not available

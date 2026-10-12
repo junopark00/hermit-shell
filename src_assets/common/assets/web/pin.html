@@ -16,6 +16,15 @@
       width: 100%;
       max-width: 44rem;
     }
+
+    /* Shell: the QR code, large enough for a phone camera at arm's length, white in both themes
+       (a dark theme would otherwise invert it) */
+    .qr-svg {
+      width: 16rem;
+      height: 16rem;
+      max-width: 100%;
+      background: #fff;
+    }
   </style>
 </head>
 
@@ -57,6 +66,42 @@
       </div>
       <div v-if="pairStatus" class="alert" :class="'alert-' + pairStatus" role="alert">{{ pairMessage }}</div>
     </form>
+    <!-- Shell: QR pairing (docs/features.md "QR pairing"). One code at a time; it works once, for
+         120 seconds, from the local network. The token is shown once, in the code and the link, and
+         never fetched again; the state is polled every 2 seconds. -->
+    <div class="card d-flex flex-column p-4 mb-4 pair-card" id="qr-pairing">
+      <h2 class="h5 mb-1">{{ $t('pin.qr_title') }}</h2>
+      <p class="form-text mt-0 mb-2">{{ $t('pin.qr_desc') }}</p>
+      <template v-if="!qr.link">
+        <label for="qr-host" class="form-label mt-2 mb-1">{{ $t('pin.qr_host') }}</label>
+        <select id="qr-host" class="form-select" v-model="qr.hostChoice">
+          <option v-for="host in qr.hosts" :value="host">{{ host }}</option>
+          <option value="">{{ $t('pin.qr_host_other') }}</option>
+        </select>
+        <input v-if="qr.hostChoice === ''" type="text" class="form-control mt-2" id="qr-host-manual" v-model="qr.hostManual" :placeholder="$t('pin.qr_host_placeholder')" maxlength="253" />
+        <div class="form-text">{{ $t('pin.qr_host_desc') }}</div>
+        <div class="form-text mt-2">{{ $t('pin.qr_perm_note', { perm: permissionSummary(pairing.editPerm) }) }}</div>
+        <button type="button" class="btn btn-primary mt-3" :disabled="qr.pending || !qrHost" @click="createQr">{{ $t('pin.qr_create') }}</button>
+      </template>
+      <template v-else>
+        <div class="d-flex flex-column align-items-center">
+          <svg class="qr-svg" :viewBox="'0 0 ' + qr.size + ' ' + qr.size" shape-rendering="crispEdges" role="img" :aria-label="$t('pin.qr_image_alt')">
+            <rect :width="qr.size" :height="qr.size" fill="#ffffff"></rect>
+            <path :d="qr.path" fill="#000000"></path>
+          </svg>
+          <div class="mt-2 fw-semibold" :class="{ 'text-danger': qr.remaining <= 10 }">{{ $t('pin.qr_countdown', { s: qr.remaining }) }}</div>
+          <div class="form-text text-center">{{ $t('pin.qr_scan_hint') }}</div>
+        </div>
+        <label for="qr-link" class="form-label mt-3 mb-1">{{ $t('pin.qr_link') }}</label>
+        <div class="input-group">
+          <input type="text" class="form-control monospace" id="qr-link" readonly :value="qr.link" @focus="$event.target.select()" />
+          <button type="button" class="btn btn-outline-secondary" @click="copyQrLink">{{ $t(qr.copied ? 'pin.qr_copied' : 'pin.qr_copy') }}</button>
+        </div>
+        <div class="form-text">{{ $t('pin.qr_link_note') }}</div>
+        <button type="button" class="btn btn-outline-danger mt-3 align-self-start" @click="cancelQr">{{ $t('pin.qr_cancel') }}</button>
+      </template>
+      <div v-if="qr.status" class="alert mt-3 mb-0" :class="'alert-' + qr.status" role="status">{{ qr.message }}</div>
+    </div>
     <div class="alert alert-warning">
       <b>{{ $t('_common.warning') }}</b> {{ $t('pin.warning_msg') }}
     </div>
@@ -210,6 +255,8 @@
   import { initApp } from './init'
   import Navbar from './Navbar.vue'
   import Checkbox from './Checkbox.vue'
+  // Shell: QR encoder (qrcode-generator, MIT, no dependencies), bundled by vite; nothing is fetched
+  import qrcode from 'qrcode-generator'
 
   /**
    * Permissions:
@@ -384,8 +431,35 @@
 
   const NOTICE_MS = 5000;
 
+  // Shell: QR pairing. The state is polled every 2 seconds (the dashboard's period) and the
+  // countdown ticks every second between polls; the quiet zone is the 4 modules the QR standard asks for.
+  const QR_POLL_MS = 2000;
+  const QR_TICK_MS = 1000;
+  const QR_QUIET_ZONE = 4;
+
+  // The modules of the QR code for `text` as one SVG path (error correction M, version chosen by
+  // the encoder); drawn with data bindings only, nothing is inserted as HTML.
+  const qrPath = (text) => {
+    const code = qrcode(0, 'M');
+    code.addData(text, 'Byte');
+    code.make();
+    const count = code.getModuleCount();
+    let path = '';
+    for (let row = 0; row < count; row++) {
+      for (let col = 0; col < count; col++) {
+        if (code.isDark(row, col)) {
+          path += `M${col + QR_QUIET_ZONE} ${row + QR_QUIET_ZONE}h1v1h-1z`;
+        }
+      }
+    }
+    return { size: count + 2 * QR_QUIET_ZONE, path };
+  };
+
   let currentEditingClient = null;
   let noticeTimeout = null;
+  let qrPollTimer = null;
+  let qrTickTimer = null;
+  let qrCopiedTimer = null;
 
   const data = () => {
     const choice = loadPairChoice();
@@ -404,6 +478,22 @@
       pairCustomPerm: choice.custom,
       showPairToggles: false,
       pairPending: false,  // Shell: one PIN request at a time; a second one would fail the pairing
+      // Shell: QR pairing; `link` holds the one-time secret while the code is shown and is dropped
+      // as soon as the record ends (used, expired, cancelled)
+      qr: {
+        hosts: [],
+        hostChoice: '',
+        hostManual: '',
+        pending: false,
+        link: '',
+        size: 0,
+        path: '',
+        remaining: 0,
+        expiresAt: 0,
+        copied: false,
+        status: '',
+        message: ''
+      },
       clients: [],
       clientsError: false,
       notice: null,
@@ -423,8 +513,18 @@
     },
     inject: ['i18n'],
     data,
+    computed: {
+      // Shell: the host the QR link names: the chosen address, or the typed one
+      qrHost() {
+        return (this.qr.hostChoice !== '' ? this.qr.hostChoice : this.qr.hostManual).trim();
+      }
+    },
     created() {
       this.refreshClients();
+      this.loadQrHosts();
+    },
+    beforeUnmount() {
+      this.stopQrTimers();
     },
     mounted() {
       // Shell: prefill from the fragment a companion client opened this page with, then drop it so a
@@ -522,6 +622,147 @@
           .finally(() => {
             this.pairPending = false;
           });
+      },
+      // Shell: QR pairing
+      loadQrHosts() {
+        fetch("./api/pair/qr/hosts", { credentials: 'include' })
+          .then((response) => response.json())
+          .then((response) => {
+            this.qr.hosts = Array.isArray(response.hosts) ? response.hosts : [];
+            this.qr.hostChoice = this.qr.hosts.length ? this.qr.hosts[0] : '';
+          })
+          .catch(() => {
+            this.qr.hosts = [];
+            this.qr.hostChoice = '';
+          });
+      },
+      createQr() {
+        if (this.qr.pending || !this.qrHost) {
+          return;
+        }
+        this.qr.pending = true;
+        this.qr.status = '';
+        this.qr.message = '';
+        const perm = this.pairing.editPerm & permissionMapping._all;
+        fetch("./api/pair/qr", {
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          method: 'POST',
+          body: JSON.stringify({ perm, host: this.qrHost })
+        })
+          .then((response) => response.json().then((body) => ({ code: response.status, body })))
+          .then(({ code, body }) => {
+            if (code === 403) {
+              this.qr.status = 'warning';
+              this.qr.message = this.i18n.t('pin.qr_disabled');
+              return;
+            }
+            if (!body.status || !body.link) {
+              throw new Error(body.error || ('HTTP ' + code));
+            }
+            const drawn = qrPath(body.link);
+            this.qr.link = body.link;
+            this.qr.size = drawn.size;
+            this.qr.path = drawn.path;
+            this.qr.copied = false;
+            this.qr.expiresAt = Date.now() + (body.expires_in || 120) * 1000;
+            this.qr.remaining = body.expires_in || 120;
+            this.qr.status = 'info';
+            this.qr.message = this.i18n.t('pin.qr_created', { perm: this.permissionSummary(perm) });
+            this.stopQrTimers();
+            qrTickTimer = setInterval(() => this.tickQr(), QR_TICK_MS);
+            qrPollTimer = setInterval(() => this.pollQr(), QR_POLL_MS);
+          })
+          .catch((err) => {
+            this.qr.status = 'danger';
+            this.qr.message = this.i18n.t('pin.qr_error') + err.message;
+          })
+          .finally(() => {
+            this.qr.pending = false;
+          });
+      },
+      tickQr() {
+        this.qr.remaining = Math.max(0, Math.ceil((this.qr.expiresAt - Date.now()) / 1000));
+      },
+      pollQr() {
+        fetch("./api/pair/qr", { credentials: 'include', cache: 'no-store' })
+          .then((response) => response.json())
+          .then((response) => {
+            if (!response.status) {
+              return;
+            }
+            switch (response.state) {
+              case 'pending':
+                this.qr.expiresAt = Date.now() + response.remaining * 1000;
+                this.qr.remaining = response.remaining;
+                break;
+              case 'in_use':
+                this.qr.expiresAt = Date.now() + response.remaining * 1000;
+                this.qr.remaining = response.remaining;
+                this.qr.status = 'info';
+                this.qr.message = this.i18n.t('pin.qr_in_use');
+                break;
+              case 'used':
+                // paired_name is the device's own text; it is shown through a text binding only
+                this.endQr('success', this.i18n.t('pin.qr_used', { name: response.paired_name || this.i18n.t('pin.unpair_single_unknown') }));
+                if (!currentEditingClient) {
+                  this.refreshClients();
+                }
+                break;
+              case 'expired':
+                this.endQr('warning', this.i18n.t('pin.qr_expired'));
+                break;
+              default:
+                this.endQr('warning', this.i18n.t('pin.qr_gone'));
+                break;
+            }
+          })
+          .catch(() => {
+            // a failed poll changes nothing; the next one in 2 seconds tells the state
+          });
+      },
+      cancelQr() {
+        fetch("./api/pair/qr", { credentials: 'include', method: 'DELETE' })
+          .finally(() => {
+            this.endQr('secondary', this.i18n.t('pin.qr_cancelled'));
+          });
+      },
+      // Shell: the record ended: drop the link (the secret is not kept on the page) and stop polling
+      endQr(status, message) {
+        this.stopQrTimers();
+        this.qr.link = '';
+        this.qr.path = '';
+        this.qr.size = 0;
+        this.qr.remaining = 0;
+        this.qr.copied = false;
+        this.qr.status = status;
+        this.qr.message = message;
+      },
+      stopQrTimers() {
+        clearInterval(qrPollTimer);
+        clearInterval(qrTickTimer);
+        qrPollTimer = null;
+        qrTickTimer = null;
+      },
+      copyQrLink() {
+        const done = () => {
+          this.qr.copied = true;
+          clearTimeout(qrCopiedTimer);
+          qrCopiedTimer = setTimeout(() => {
+            this.qr.copied = false;
+          }, 2000);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(this.qr.link).then(done, () => {
+            this.qr.status = 'warning';
+            this.qr.message = this.i18n.t('pin.qr_copy_error');
+          });
+        } else {
+          this.qr.status = 'warning';
+          this.qr.message = this.i18n.t('pin.qr_copy_error');
+        }
       },
       addCmd(arr, idx) {
         const newCmd = Object.assign({}, cmdTpl);
