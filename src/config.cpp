@@ -80,6 +80,18 @@ namespace config {
 
   }  // namespace nv
 
+  // Shell: local_cursor = auto (default) | off
+  local_cursor_e local_cursor_from_view(const ::std::string_view &mode) {
+    if (mode == "auto") {
+      return local_cursor_e::automatic;
+    }
+    if (mode == "off") {
+      return local_cursor_e::off;
+    }
+    BOOST_LOG(warning) << "config: unknown local_cursor value: " << mode;
+    return local_cursor_e::automatic;
+  }
+
   namespace amd {
 #if !defined(_WIN32) || defined(DOXYGEN)
   // values accurate as of 27/12/2022, but aren't strictly necessary for MacOS build
@@ -530,6 +542,7 @@ namespace config {
     false, // isolated Display
     false, // ignore_encoder_probe_failure
     true,  // virtual_display_release_on_monitor
+    local_cursor_e::automatic,  // local_cursor (Shell: offered to clients that ask)
   };
 
   audio_t audio {
@@ -1235,6 +1248,7 @@ namespace config {
     bool_f(vars, "isolated_virtual_display_option", video.isolated_virtual_display_option);
     bool_f(vars, "ignore_encoder_probe_failure", video.ignore_encoder_probe_failure);
     bool_f(vars, "virtual_display_release_on_monitor", video.virtual_display_release_on_monitor);
+    generic_f(vars, "local_cursor", video.local_cursor, local_cursor_from_view);
 
     path_f(vars, "pkey", nvhttp.pkey);
     path_f(vars, "cert", nvhttp.cert);

@@ -183,6 +183,40 @@ int main() {
     check("zero width rejected", cs::convert(raw, shape) == cs::convert_e::invalid);
   }
 
+  std::printf("wire\n");
+  {
+    cs::bgra_t shape;
+    shape.id = 0x11223344;
+    shape.width = 2;
+    shape.height = 1;
+    shape.hotspot_x = 1;
+    shape.hotspot_y = 0;
+    shape.pixels = {1, 2, 3, 4, 5, 6, 7, 8};
+
+    std::vector<std::uint8_t> out;
+    cs::wire::append_shape(out, shape, 0, shape.pixels.size());
+    const std::uint8_t expected[] = {1, 0x44, 0x33, 0x22, 0x11, 2, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8};
+    check("shape payload layout", out.size() == sizeof(expected) && std::memcmp(out.data(), expected, sizeof(expected)) == 0);
+    check("shape header size constant", cs::wire::shape_header_bytes == 17);
+
+    out.clear();
+    cs::wire::append_shape(out, shape, 4, 4);
+    const std::uint8_t chunk[] = {1, 0x44, 0x33, 0x22, 0x11, 2, 0, 1, 0, 1, 0, 0, 0, 4, 0, 0, 0, 5, 6, 7, 8};
+    check("shape chunk carries offset and its bytes", out.size() == sizeof(chunk) && std::memcmp(out.data(), chunk, sizeof(chunk)) == 0);
+
+    out.clear();
+    cs::wire::append_shape(out, shape, 6, 100);
+    check("chunk past the end is clipped", out.size() == cs::wire::shape_header_bytes + 2 && out[17] == 7 && out[18] == 8);
+
+    out.clear();
+    cs::wire::append_state(out, 0xA1B2C3D4, true, false);
+    const std::uint8_t state[] = {1, 0xD4, 0xC3, 0xB2, 0xA1, 1, 0};
+    check("state payload layout", out.size() == sizeof(state) && std::memcmp(out.data(), state, sizeof(state)) == 0);
+    out.clear();
+    cs::wire::append_state(out, 0, false, true);
+    check("state flags", out.size() == 7 && out[1] == 0 && out[5] == 0 && out[6] == 1);
+  }
+
   std::printf("%d passed, %d failed\n", g_pass, g_fail);
   return g_fail == 0 ? 0 : 1;
 }

@@ -845,6 +845,12 @@ export default {
       if (session.hdr) {
         parts.push(this.$t('shell_dashboard.hdr_requested'));
       }
+      // Local cursor: live entries say whether the host still draws it (another client did not ask)
+      if (session.cursor === 'local') {
+        parts.push(this.$t(session.cursor_composing ? 'shell_dashboard.cursor_local_composing' : 'shell_dashboard.cursor_local'));
+      } else if (session.cursor === 'host') {
+        parts.push(this.$t('shell_dashboard.cursor_host'));
+      }
       // Encode time guard: live entries carry the current value, history entries the session's peak
       if (session.encode_budget_pct !== undefined) {
         parts.push(this.$t('shell_dashboard.encode_budget_detail', { pct: session.encode_budget_pct }));

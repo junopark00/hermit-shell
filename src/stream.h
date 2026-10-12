@@ -95,6 +95,19 @@ namespace stream {
      * @brief Shell: live figures of a session for the web dashboard, as a JSON object.
      */
     std::string live_info_json(const session_t &session);
+
+    /**
+     * @brief Shell: local cursor (docs/features.md "Local cursor"). The client draws the cursor
+     *        itself (`local`: the host sends its shape and visibility over the control stream and
+     *        leaves it out of the video once every session asked for this) or sees it in the video
+     *        (`host`, the default). Called from the HTTPS thread for a running session.
+     */
+    void set_local_cursor(session_t &session, bool local);
+
+    /**
+     * @brief Shell: whether the session asked for a local cursor.
+     */
+    bool local_cursor(const session_t &session);
   }  // namespace session
 
   // Shell: every finished session is appended as one JSON object per line to

@@ -38,6 +38,7 @@
 #include "network.h"
 #include "nvhttp.h"
 #include "platform/common.h"
+#include "platform/cursor_bus.h"
 #include "process.h"
 #include "rtsp.h"
 #include "stream.h"
@@ -1197,6 +1198,10 @@ namespace nvhttp {
         tree.put("root.VirtualDisplayDriverReady", proc::vDisplayDriverStatus == VDISPLAY::DRIVER_STATUS::OK);
       } else {
         tree.put("root.VirtualDisplayDriverReady", true);
+      }
+      // Shell: local cursor protocol version (docs/features.md "Local cursor"); absent when turned off
+      if (config::video.local_cursor != config::local_cursor_e::off) {
+        tree.put("root.LocalCursor", 1);
       }
     #endif
     } else {
@@ -2425,6 +2430,112 @@ namespace nvhttp {
   }
 
   /**
+   * @brief Shell: GET /actions/cursor, the local cursor (docs/features.md "Local cursor"), for the
+   *        caller's own running stream.
+   * @details `mode=local&v=1` asks the host to send the pointer shape and visibility over the control
+   * stream (CURSOR_SHAPE 0x3100, CURSOR_STATE 0x3101) and to leave the pointer out of the video once
+   * every session asked for this; `mode=host` returns to the default. Replies `mode=local` or
+   * `mode=host` (with `reason=off` when `local_cursor = off`, `reason=version` when `v` is newer than
+   * the host supports); 403 when the client is not streaming, 409 when the capture backend does not
+   * report pointer shapes (Windows.Graphics.Capture). `shape=<id>` returns the current pointer shape
+   * when its id matches, as one CURSOR_SHAPE payload (offset 0, all pixels, application/octet-stream),
+   * else 404; clients use it when a CURSOR_STATE names a shape they do not hold.
+   */
+  void cursorAction(resp_https_t response, req_https_t request) {
+    print_req<ShellHTTPS>(request);
+
+    auto named_cert_p = get_verified_cert(request);
+    if (!(named_cert_p->perm & PERM::_allow_view)) {
+      response->write(SimpleWeb::StatusCode::client_error_unauthorized);
+      response->close_connection_after_response = true;
+      return;
+    }
+
+    auto session = rtsp_stream::find_session(named_cert_p->uuid);
+    if (!session || stream::session::state(*session) != stream::session::state_e::RUNNING) {
+      response->write(SimpleWeb::StatusCode::client_error_forbidden, "not streaming"sv);
+      response->close_connection_after_response = true;
+      return;
+    }
+
+    auto args = request->parse_query_string();
+
+    if (const auto shape_arg = get_arg(args, "shape", ""); !shape_arg.empty()) {
+      std::uint32_t id = 0;
+      try {
+        const auto value = std::stoull(shape_arg);
+        if (value == 0 || value > 0xFFFFFFFFull) {
+          throw std::out_of_range("shape id");
+        }
+        id = static_cast<std::uint32_t>(value);
+      } catch (...) {
+        response->write(SimpleWeb::StatusCode::client_error_bad_request, "shape id out of range"sv);
+        response->close_connection_after_response = true;
+        return;
+      }
+
+      auto shape = platf::cursor_bus::find_shape(id);
+      if (!shape) {
+        response->write(SimpleWeb::StatusCode::client_error_not_found, "shape not current"sv);
+        return;
+      }
+
+      std::vector<std::uint8_t> payload;
+      platf::cursor_shape::wire::append_shape(payload, *shape, 0, shape->pixels.size());
+      SimpleWeb::CaseInsensitiveMultimap headers;
+      headers.emplace("Content-Type", "application/octet-stream");
+      response->write(SimpleWeb::StatusCode::success_ok, std::string_view {(const char *) payload.data(), payload.size()}, headers);
+      return;
+    }
+
+    const auto mode = get_arg(args, "mode", "");
+    if (mode == "local") {
+      if (config::video.local_cursor == config::local_cursor_e::off) {
+        stream::session::set_local_cursor(*session, false);
+        response->write("mode=host\nreason=off\n");
+        return;
+      }
+
+      int version = 0;
+      try {
+        version = std::stoi(get_arg(args, "v", "1"));
+      } catch (...) {
+        version = 0;
+      }
+      if (version < 1) {
+        response->write(SimpleWeb::StatusCode::client_error_bad_request, "v out of range"sv);
+        response->close_connection_after_response = true;
+        return;
+      }
+      if (version > 1) {
+        stream::session::set_local_cursor(*session, false);
+        response->write("mode=host\nreason=version\n");
+        return;
+      }
+
+      if (config::video.capture == "wgc" || !platf::cursor_bus::shapes_available()) {
+        stream::session::set_local_cursor(*session, false);
+        response->write(SimpleWeb::StatusCode::client_error_conflict, "capture backend does not report the pointer shape"sv);
+        response->close_connection_after_response = true;
+        return;
+      }
+
+      stream::session::set_local_cursor(*session, true);
+      response->write("mode=local\n");
+      return;
+    }
+
+    if (mode == "host") {
+      stream::session::set_local_cursor(*session, false);
+      response->write("mode=host\n");
+      return;
+    }
+
+    response->write(SimpleWeb::StatusCode::client_error_bad_request, "mode=local|host or shape=<id> required"sv);
+    response->close_connection_after_response = true;
+  }
+
+  /**
    * @brief Shell: turn the host PC off, restart it, or put it to sleep from a client (Hermit's PC list).
    * @details `action=query` answers whether this client may do it, which of sleep and hibernation
    * this PC supports (`sleep=1|0`, `hibernate=1|0`), whether a wired adapter wakes it on a magic
@@ -3012,6 +3123,7 @@ namespace nvhttp {
       getClipboard(resp, req, https_server.io_service);
     };
     https_server.resource["^/actions/bitrate$"]["GET"] = setBitrate;
+    https_server.resource["^/actions/cursor$"]["GET"] = cursorAction;
     https_server.resource["^/actions/power$"]["GET"] = power;
     https_server.resource["^/actions/clipboard$"]["POST"] = [&https_server](auto resp, auto req) {
       setClipboard(resp, req, https_server.io_service);

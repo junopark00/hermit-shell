@@ -171,4 +171,56 @@ namespace platf::cursor_shape {
     out = std::move(shape);
     return convert_e::ok;
   }
+
+  /// The wire layout shared by the control stream messages (stream.cpp) and
+  /// GET /actions/cursor?shape=<id> (nvhttp.cpp). All integers little-endian.
+  namespace wire {
+    constexpr std::uint8_t version = 1;
+
+    /// CURSOR_SHAPE payload (control stream type 0x3100), without the 4-byte control header:
+    /// version u8, shape_id u32, width u16, height u16, hotspot_x u16, hotspot_y u16, offset u32,
+    /// then the pixel bytes [offset, offset + count) of the BGRA32 image. A shape larger than one
+    /// packet arrives as several messages with increasing offsets; the image is complete when
+    /// offset + count == width * height * 4.
+    constexpr std::size_t shape_header_bytes = 17;
+
+    /// CURSOR_STATE payload (control stream type 0x3101): version u8, shape_id u32 (0 = no shape,
+    /// show the default arrow), visible u8, host_composing u8 (1 = the cursor is also drawn into
+    /// the video because another session did not ask for a local cursor).
+    constexpr std::size_t state_bytes = 7;
+
+    inline void put16(std::vector<std::uint8_t> &out, std::uint16_t v) {
+      out.push_back(static_cast<std::uint8_t>(v & 0xFF));
+      out.push_back(static_cast<std::uint8_t>(v >> 8));
+    }
+
+    inline void put32(std::vector<std::uint8_t> &out, std::uint32_t v) {
+      put16(out, static_cast<std::uint16_t>(v & 0xFFFF));
+      put16(out, static_cast<std::uint16_t>(v >> 16));
+    }
+
+    /// Append a CURSOR_SHAPE payload carrying the pixel bytes [offset, offset + count).
+    inline void append_shape(std::vector<std::uint8_t> &out, const bgra_t &shape, std::uint32_t offset, std::size_t count) {
+      out.reserve(out.size() + shape_header_bytes + count);
+      out.push_back(version);
+      put32(out, shape.id);
+      put16(out, shape.width);
+      put16(out, shape.height);
+      put16(out, shape.hotspot_x);
+      put16(out, shape.hotspot_y);
+      put32(out, offset);
+      const std::size_t begin = std::min<std::size_t>(offset, shape.pixels.size());
+      const std::size_t end = std::min<std::size_t>(begin + count, shape.pixels.size());
+      out.insert(out.end(), shape.pixels.begin() + begin, shape.pixels.begin() + end);
+    }
+
+    /// Append a CURSOR_STATE payload.
+    inline void append_state(std::vector<std::uint8_t> &out, std::uint32_t shape_id, bool visible, bool host_composing) {
+      out.reserve(out.size() + state_bytes);
+      out.push_back(version);
+      put32(out, shape_id);
+      out.push_back(visible ? 1 : 0);
+      out.push_back(host_composing ? 1 : 0);
+    }
+  }  // namespace wire
 }  // namespace platf::cursor_shape

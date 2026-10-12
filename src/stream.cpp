@@ -6,6 +6,7 @@
 // standard includes
 #include <algorithm>
 #include <ctime>
+#include <deque>
 #include <filesystem>
 #include <atomic>
 #include <fstream>
@@ -35,6 +36,7 @@ extern "C" {
 #include "logging.h"
 #include "network.h"
 #include "platform/common.h"
+#include "platform/cursor_bus.h"
 #include "process.h"
 #include "stream.h"
 #include "sync.h"
@@ -437,6 +439,23 @@ namespace stream {
     std::atomic<std::int64_t> last_recovery_ms {0};  // steady clock, ms, of the last of the two
     std::atomic<std::uint64_t> reported_frames_lost {0};  // only from clients that send loss reports
     std::shared_ptr<video::encode_budget_t> encode_budget;  // Shell: encode time vs. frame interval (written by the encoder thread)
+
+    // Shell: local cursor (docs/features.md "Local cursor"). The atomics are written by the HTTPS
+    // thread (/actions/cursor); everything else belongs to the control thread, which relays the
+    // cursor bus to the client.
+    struct {
+      std::atomic<bool> requested {false};  // the client asked for mode=local
+      std::atomic<bool> resync {false};  // mode just became local: send the current shape and state again
+      std::atomic<bool> ever_local {false};  // for the session record
+      std::uint64_t shape_gen = 0;  // bus generations the client has
+      std::uint64_t state_gen = 0;
+      std::uint32_t shape_id = 0;  // last state sent
+      bool visible = true;
+      bool composing = true;
+      std::deque<std::uint32_t> sent_ids;  // shapes the client holds, newest last (at most cursor_sent_ids_max)
+      std::chrono::steady_clock::time_point shape_sent_at {};
+      std::chrono::steady_clock::time_point state_sent_at {};
+    } cursor;
 
     std::list<crypto::command_entry_t> do_cmds;
     std::list<crypto::command_entry_t> undo_cmds;
@@ -950,6 +969,27 @@ namespace stream {
     return 0;
   }
 
+  /**
+   * @brief Shell: decide whether the capture draws the cursor into the video (local cursor). It is
+   *        left out only while every session asked for a local cursor; one session that did not
+   *        (stock Moonlight, a game-mode client) keeps it in for everyone, and those who asked are
+   *        told so with host_composing=1.
+   * @param sessions The session list, locked by the caller.
+   * @return Whether the host composes the cursor.
+   */
+  bool update_cursor_compose(const std::vector<session_t *> &sessions) {
+    bool all_local = !sessions.empty();
+    for (auto session : sessions) {
+      if (!session->cursor.requested.load(std::memory_order_relaxed)) {
+        all_local = false;
+        break;
+      }
+    }
+    const bool composing = !all_local;
+    platf::cursor_bus::set_compose(composing);
+    return composing;
+  }
+
   void controlBroadcastThread(control_server_t *server) {
     server->map(packetTypes[IDX_PERIODIC_PING], [](session_t *session, const std::string_view &payload) {
       BOOST_LOG(verbose) << "type [IDX_PERIODIC_PING]"sv;
@@ -1228,6 +1268,9 @@ namespace stream {
 
           ++pos;
         })
+
+        // Shell: sessions came or went, or asked for a local cursor
+        update_cursor_compose(*server->_sessions);
       }
 
       // Don't break until any pending sessions either expire or connect
@@ -1271,6 +1314,9 @@ namespace stream {
     }
 
     server->flush();
+
+    // Shell: no sessions left, the cursor goes back into the video
+    platf::cursor_bus::set_compose(true);
   }
 
   void recvThread(broadcast_ctx_t &ctx) {
@@ -2123,6 +2169,8 @@ namespace stream {
         entry["pacing_mbps"] = std::atomic_ref<int>(const_cast<int &>(session.config.videoPacingMbps)).load(std::memory_order_relaxed);
         entry["pacing_auto"] = session.config.videoPacingAuto;
         entry["fec_percent"] = config::stream.fec_percentage;
+        // Local cursor: "local" when the client drew the cursor itself at any time
+        entry["cursor"] = session.cursor.ever_local.load(std::memory_order_relaxed) ? "local" : "host";
         if (const char *reason = session.end_reason.load()) {
           entry["end_reason"] = reason;
         }
@@ -2205,6 +2253,10 @@ namespace stream {
       info["live_bitrate"] = video::live_bitrate_supported();
       info["pacing_mbps"] = std::atomic_ref<int>(const_cast<int &>(session.config.videoPacingMbps)).load(std::memory_order_relaxed);
       info["pacing_auto"] = session.config.videoPacingAuto;
+      // Local cursor: whether this client draws the cursor itself, and whether the host still
+      // draws it into the video (another session did not ask)
+      info["cursor"] = session.cursor.requested.load(std::memory_order_relaxed) ? "local" : "host";
+      info["cursor_composing"] = platf::cursor_bus::compose();
 
       if (const auto rtt = session.rtt_ms.load(std::memory_order_relaxed); rtt > 0 && state == (int) state_e::RUNNING) {
         info["rtt_ms"] = rtt;
@@ -2241,6 +2293,30 @@ namespace stream {
 
     std::string uuid(const session_t& session) {
       return session.device_uuid;
+    }
+
+    void set_local_cursor(session_t &session, bool local) {
+      const bool before = session.cursor.requested.exchange(local, std::memory_order_relaxed);
+      if (local) {
+        session.cursor.ever_local.store(true, std::memory_order_relaxed);
+        // The control thread sends the current shape and state on its next pass
+        session.cursor.resync.store(true, std::memory_order_release);
+      }
+
+      // Recompute right away rather than on the control thread's next pass
+      bool composing = true;
+      if (session.broadcast_ref) {
+        auto lg = session.broadcast_ref->control_server._sessions.lock();
+        composing = update_cursor_compose(*session.broadcast_ref->control_server._sessions);
+      }
+
+      if (before != local) {
+        BOOST_LOG(info) << "Cursor for [" << session.device_name << "]: " << (local ? "local" : "host") << "; host composing: " << (composing ? "yes" : "no");
+      }
+    }
+
+    bool local_cursor(const session_t &session) {
+      return session.cursor.requested.load(std::memory_order_relaxed);
     }
 
     std::uint64_t alloc_order(const session_t &session) {

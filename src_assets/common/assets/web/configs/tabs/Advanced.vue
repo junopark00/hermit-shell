@@ -118,6 +118,16 @@ const config = ref(props.config)
       <div class="form-text">{{ $t('config.capture_desc') }}</div>
     </div>
 
+    <!-- Local cursor (Shell, Desktop Duplication only) -->
+    <div class="mb-3" v-if="platform === 'windows'">
+      <label for="local_cursor" class="form-label">{{ $t('config.local_cursor') }}</label>
+      <select id="local_cursor" class="form-select" v-model="config.local_cursor">
+        <option value="auto">{{ $t('config.local_cursor_auto') }}</option>
+        <option value="off">{{ $t('config.local_cursor_off') }}</option>
+      </select>
+      <div class="form-text">{{ $t('config.local_cursor_desc') }}</div>
+    </div>
+
     <!-- Encoder -->
     <div class="mb-3">
       <label for="encoder" class="form-label">{{ $t('config.encoder') }}</label>

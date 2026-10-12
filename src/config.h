@@ -25,6 +25,12 @@ namespace config {
     adjust,  ///< as notify, and the next stream with the same resolution and frame rate starts one NVENC preset faster
   };
 
+  // Shell: local cursor (docs/features.md "Local cursor")
+  enum class local_cursor_e {
+    automatic,  ///< offered to clients that ask for it (serverinfo LocalCursor=1); others see no change (default)
+    off,  ///< never offered; the cursor is always drawn into the video
+  };
+
   struct video_t {
     bool headless_mode;
     bool limit_framerate;
@@ -158,6 +164,7 @@ namespace config {
     bool ignore_encoder_probe_failure;
     // Shell: remove the virtual display when a physical monitor turns on while nobody streams
     bool virtual_display_release_on_monitor;
+    local_cursor_e local_cursor;  // Shell: local cursor for clients that ask for it
   };
 
   struct audio_t {
