@@ -490,6 +490,22 @@ namespace video {
       return {config.width, config.height, config.framerate, config.videoFormat, config.dynamicRange, config.chromaSamplingType};
     }
 
+    // The key as the log shows it: "3840x2160@120 HEVC HDR 4:4:4"
+    std::string geometry_text(const config_t &config) {
+      static constexpr const char *codecs[] = {"H.264", "HEVC", "AV1"};
+      std::string text = std::to_string(config.width) + 'x' + std::to_string(config.height) + '@' + std::to_string(config.framerate);
+      if (config.videoFormat >= 0 && config.videoFormat < 3) {
+        text += std::string {" "} + codecs[config.videoFormat];
+      }
+      if (config.dynamicRange) {
+        text += " HDR";
+      }
+      if (config.chromaSamplingType == 1) {
+        text += " 4:4:4";
+      }
+      return text;
+    }
+
     // The preset guard's memory (nvenc_preset_guard = adjust): the NVENC preset the next session of a
     // geometry starts with. In memory only; forgotten when nvenc_preset changes or Shell restarts.
     struct guard_state_t {
@@ -536,7 +552,7 @@ namespace video {
       if (!inserted) {
         it->second = std::min(it->second, used_preset - 1);  // never slower than an earlier adjustment
       }
-      BOOST_LOG(info) << "NVENC preset guard: the next "sv << config.width << 'x' << config.height << '@' << config.framerate
+      BOOST_LOG(info) << "NVENC preset guard: the next "sv << geometry_text(config)
                       << " stream starts with preset P"sv << it->second << " (this one used P"sv << used_preset
                       << ", nvenc_preset is "sv << guard_state.configured_preset << ')';
     }
@@ -617,8 +633,8 @@ namespace video {
                 encoder_info += ", " + std::to_string(nvenc_engines) + " NVENC engine(s)";
               }
             }
-            BOOST_LOG(warning) << "Encoding uses "sv << pct << "% of the frame budget at "sv << config.width << 'x' << config.height
-                               << '@' << config.framerate << encoder_info << "; a faster preset is recommended"sv;
+            BOOST_LOG(warning) << "Encoding uses "sv << pct << "% of the frame budget at "sv << geometry_text(config)
+                               << encoder_info << "; a faster preset is recommended"sv;
             on_exceeded(config, nvenc_preset);
           }
         } else if (exceeded && below_s >= streak_s) {

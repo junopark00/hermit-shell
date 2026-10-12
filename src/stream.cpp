@@ -456,7 +456,7 @@ namespace stream {
       std::uint32_t shape_id = 0;  // last state sent
       bool visible = true;
       bool composing = true;
-      std::deque<std::uint32_t> sent_ids;  // shapes the client holds, newest last (at most cursor_sent_ids_max)
+      std::deque<std::uint32_t> sent_ids;  // shapes the client holds, newest last (at most cursor_sent_ids_max); cleared on resync
       std::chrono::steady_clock::time_point shape_sent_at {};
       std::chrono::steady_clock::time_point state_sent_at {};
     } cursor;
@@ -988,7 +988,7 @@ namespace stream {
   }
 
   // Shell: local cursor messages (docs/features.md "Local cursor")
-  constexpr std::size_t cursor_sent_ids_max = 32;  ///< shapes a client is assumed to hold (per session)
+  constexpr std::size_t cursor_sent_ids_max = 128;  ///< shapes a client is assumed to hold (per session, 4 bytes each; more than any cursor pack animates)
   /// Pixel bytes per CURSOR_SHAPE message. The encrypted control packet carries a 16-bit length, so a
   /// shape of more than about 16k pixels goes out in several messages with increasing offsets.
   constexpr std::size_t cursor_shape_chunk_bytes = 61440;
@@ -1056,40 +1056,50 @@ namespace stream {
 
     const bool force = c.resync.exchange(false, std::memory_order_acquire);
     if (force) {
+      // The client may have dropped its cache (reconnect, mode toggle): offer every shape again
       c.shape_gen = 0;
       c.state_gen = 0;
+      c.sent_ids.clear();
     }
 
-    const std::uint32_t id = bus.shape ? bus.shape->id : 0;
-    bool state_due = force || c.state_gen != bus.state_gen || id != c.shape_id || host_composing != c.composing;
+    std::uint32_t id = bus.shape ? bus.shape->id : 0;
+    bool shape_held = false;  // a new shape waits for the rate limit
 
     if (c.shape_gen != bus.shape_gen) {
       auto known = std::find(c.sent_ids.begin(), c.sent_ids.end(), id);
       if (id != 0 && known == c.sent_ids.end()) {
         if (now - c.shape_sent_at < cursor_shape_interval) {
-          return;  // rate limit: the next pass sends whatever shape is current then
-        }
-        if (send_cursor_shape(session, *bus.shape)) {
+          shape_held = true;  // the next pass sends whatever shape is current then
+        } else if (send_cursor_shape(session, *bus.shape)) {
           return;
-        }
-        c.shape_sent_at = now;
-        c.sent_ids.push_back(id);
-        if (c.sent_ids.size() > cursor_sent_ids_max) {
-          c.sent_ids.pop_front();
+        } else {
+          c.shape_sent_at = now;
+          c.sent_ids.push_back(id);
+          if (c.sent_ids.size() > cursor_sent_ids_max) {
+            c.sent_ids.pop_front();
+          }
         }
       } else if (id != 0) {
         // Most recently used goes to the back
         c.sent_ids.erase(known);
         c.sent_ids.push_back(id);
       }
-      c.shape_gen = bus.shape_gen;
-      state_due = true;
+      if (!shape_held) {
+        c.shape_gen = bus.shape_gen;
+      }
     }
 
+    if (shape_held) {
+      // The client cannot show the new shape yet; a visibility or composing change still goes out,
+      // with the shape it has
+      id = c.shape_id;
+    }
+
+    const bool visibility_change = force || bus.visible != c.visible || host_composing != c.composing;
+    const bool state_due = visibility_change || c.state_gen != bus.state_gen || id != c.shape_id;
     if (!state_due) {
       return;
     }
-    const bool visibility_change = force || bus.visible != c.visible || host_composing != c.composing;
     if (!visibility_change && now - c.state_sent_at < cursor_state_interval) {
       return;  // animated cursor: the next pass sends the newest frame
     }

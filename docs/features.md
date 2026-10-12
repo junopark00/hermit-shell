@@ -224,7 +224,7 @@ not counted. The cost is two timestamps per frame and one selection over at most
 second; nothing is logged per frame.
 
 - Over 65% for 10 consecutive seconds: the stream has exceeded its encode budget. The host log gets
-  one warning per stream (`Encoding uses 78% of the frame budget at 3840x2160@120 preset P7, 2 NVENC
+  one warning per stream (`Encoding uses 78% of the frame budget at 3840x2160@120 HEVC preset P7, 2 NVENC
   engine(s); a faster preset is recommended`), the dashboard's **Streaming now** table shows a warning line under
   the row and the session record notes it. Under 50% for 10 consecutive seconds clears the mark
   again (an `info` line); seconds between 50% and 65% end both streaks.
@@ -237,7 +237,7 @@ second; nothing is logged per frame.
   - `adjust`: in addition, the next stream with the same resolution, frame rate, codec, HDR and
     chroma format starts one NVENC preset faster than the one that exceeded the budget (P7 → P6 → …
     → P1, never below P1), and the
-    log says so (`NVENC preset guard: the next 3840x2160@120 stream starts with preset P6 (this one
+    log says so (`NVENC preset guard: the next 3840x2160@120 HEVC stream starts with preset P6 (this one
     used P7, nvenc_preset is 7)`). A running stream is never changed: reconfiguring the encoder
     mid-stream risks a broken picture. The adjustment lives in memory only; a Shell restart or a
     change of `nvenc_preset` starts again from the configured preset. It applies to the NVENC
@@ -299,31 +299,35 @@ report pointer shapes.
     `hotspot_y u16`, `offset u32`, then the pixel bytes `[offset, offset + n)` of the image, `n` being
     the rest of the message. Pixels are top-down rows of B, G, R, A with straight (not premultiplied)
     alpha, `width * height * 4` bytes in all, each dimension 1 to 256, hotspot inside the shape. The
-    encrypted control packet has a 16-bit length, so an image larger than 61,440 bytes (about 124x124)
-    arrives in several messages with increasing `offset` and the same header; it is complete when
-    `offset + n == width * height * 4`.
+    encrypted control packet has a 16-bit length, so an image larger than 61,440 bytes arrives in
+    several messages with increasing `offset` and the same header (up to 123x123 fits in one message;
+    124x124x4 = 61,504 bytes needs two); it is complete when `offset + n == width * height * 4`.
   - `0x3101 CURSOR_STATE`: `version u8` (1), `shape_id u32`, `visible u8` (0/1), `host_composing u8`
     (0/1). `shape_id` 0 means "no shape" (the client shows its default arrow; this happens before the
     first shape was captured or when the shape is larger than 256x256). The client ignores messages
     whose `version` is not 1.
 - **Shape ids and caching.** `shape_id` is the 32-bit FNV-1a hash of `width`, `height`, `hotspot_x`,
   `hotspot_y` (each as a little-endian u16, in that order) followed by the pixel bytes; 0 is mapped
-  to 1. Shell remembers the last 32 ids it sent to a session and sends only `CURSOR_STATE` for a shape
-  the client already holds, so an animated cursor costs one `CURSOR_SHAPE` per frame in its first cycle
-  and short states afterwards. A client that receives an unknown id fetches it with `?shape=<id>` and
-  keeps showing the previous shape meanwhile.
+  to 1. Shell remembers the last 128 ids it sent to a session (4 bytes each; more frames than any
+  cursor pack animates) and sends only `CURSOR_STATE` for a shape the client already holds, so an
+  animated cursor costs one `CURSOR_SHAPE` per frame in its first cycle and short states afterwards;
+  a pack with more than 128 frames keeps sending shapes. The list is cleared on every `mode=local`,
+  so a client that dropped its cache gets every shape again. A client that receives an unknown id
+  fetches it with `?shape=<id>` and keeps showing the previous shape meanwhile.
 - **Conversion.** Colour pointers are sent as captured. Monochrome (AND/XOR) and masked colour pointers
   are flattened to straight alpha; pixels that would invert the screen (the I-beam over text, for
   example) cannot be drawn by a static cursor and become opaque mid-grey (`#808080`), which stays
   visible on light and dark backgrounds. Shapes wider or taller than 256 pixels are not sent (one
   warning in the log; the client shows its default arrow).
 - **Rates.** Per session at most 20 `CURSOR_SHAPE` and 60 `CURSOR_STATE` messages per second; a
-  visibility change is never held back by the state limit. When the limit holds a message back, the
+  visibility or composing change is never held back by either limit: while a new shape waits, such a
+  change goes out as a state with the shape the client has. When a limit holds a message back, the
   newest shape or state goes out on the next pass, never a stale one. While a session uses the local
   cursor the control thread wakes every 10 ms instead of waiting up to 150 ms for the next packet.
-- **Mode change.** On `mode=local` the host immediately sends the current shape (or only the state when
-  the client holds it) and state. A capture restart (resolution change) delivers the pointer shape
-  again and the host repeats the state with its id.
+- **Mode change.** On `mode=local` the host sends the current shape and state on the control thread's
+  next pass: within about 150 ms at most, usually sooner because the client's own input packets wake
+  the thread. A capture restart (resolution change) delivers the pointer shape again and the host
+  repeats the state with its id.
 - The log notes every change (`Cursor for [Tablet]: local; host composing: no`). `GET /api/shell/live`
   session entries carry `cursor` (`local` or `host`) and `cursor_composing` (whether the host still
   draws the pointer into the video); the dashboard's video detail names the mode. The

@@ -37,6 +37,9 @@ namespace platf::cursor_bus {
   void publish_shape(cursor_shape::raw_t raw) {
     auto &b = bus();
     std::lock_guard lock {b.mutex};
+    if (raw.type != b.raw.type || raw.width != b.raw.width || raw.height != b.raw.height) {
+      b.oversize_logged = false;  // a different oversize shape is worth one more line
+    }
     b.raw = std::move(raw);
     ++b.shape_gen;
   }
