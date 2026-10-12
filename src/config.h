@@ -314,6 +314,13 @@ namespace config {
     /// pair_rate_limit_seconds before further ones are refused; 0 (either key) turns the limit off.
     int pair_rate_limit_count;
     int pair_rate_limit_seconds;
+
+    /// Shell: webhook notifications (docs/features.md "Webhooks"). Off while webhook_url is empty.
+    /// The shared secret is not here but in the credentials folder (webhook.cpp).
+    std::string webhook_url;
+    std::string webhook_events;  ///< comma list of `pairing`, `stream`, `app`
+    bool webhook_include_client_ip;
+    bool webhook_allow_http_private;  ///< http:// accepted for a private/Tailscale IP or localhost
   };
 
   extern video_t video;

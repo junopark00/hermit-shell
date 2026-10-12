@@ -41,6 +41,7 @@
 #include "stream.h"
 #include "utility.h"
 #include "uuid.h"
+#include "webhook.h"
 
 #ifdef _WIN32
   #include "platform/windows/clipboard.h"
@@ -1371,6 +1372,92 @@ namespace confighttp {
   }
 
   /**
+   * @brief Shell: webhook state for the settings page (docs/features.md "Webhooks"): whether
+   * webhooks are on, the URL problem if any, whether a secret is set (never the secret itself),
+   * queue counters and the result of the last delivery.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   *
+   * @api_examples{/api/shell/webhook| GET| null}
+   */
+  void getShellWebhook(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) {
+      return;
+    }
+
+    nlohmann::json output_tree = webhook::status();
+    output_tree["status"] = true;
+    send_response(response, output_tree);
+  }
+
+  /**
+   * @brief Shell: store the webhook secret in the credentials folder (write-only; an empty secret
+   * removes it). Used from the next event on, no restart needed.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   *
+   * @api_examples{/api/shell/webhook/secret| POST| {"secret":"..."}}
+   */
+  void saveShellWebhookSecret(resp_https_t response, req_https_t request) {
+    if (!validateContentType(response, request, "application/json") || !authenticate(response, request)) {
+      return;
+    }
+
+    std::stringstream ss;
+    ss << request->content.rdbuf();
+    try {
+      nlohmann::json input_tree = nlohmann::json::parse(ss.str());
+      const std::string secret = input_tree.value("secret", "");
+      if (secret.size() > 1024) {
+        bad_request(response, request, "The secret may be at most 1024 characters");
+        return;
+      }
+      for (unsigned char c : secret) {
+        if (c < ' ' || c == 0x7F) {
+          bad_request(response, request, "The secret must not contain control characters");
+          return;
+        }
+      }
+      if (const auto error = webhook::save_secret(secret); !error.empty()) {
+        BOOST_LOG(warning) << "Webhook secret: "sv << error;
+        bad_request(response, request, error);
+        return;
+      }
+      nlohmann::json output_tree;
+      output_tree["status"] = true;
+      output_tree["secret_set"] = !secret.empty();
+      send_response(response, output_tree);
+    } catch (std::exception &e) {
+      BOOST_LOG(warning) << "Webhook secret: "sv << e.what();
+      bad_request(response, request, e.what());
+    }
+  }
+
+  /**
+   * @brief Shell: queue a `test` webhook event. The result arrives later in GET /api/shell/webhook
+   * (`last`).
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   *
+   * @api_examples{/api/shell/webhook/test| POST| null}
+   */
+  void sendShellWebhookTest(resp_https_t response, req_https_t request) {
+    if (!validateContentType(response, request, "application/json") || !authenticate(response, request)) {
+      return;
+    }
+
+    print_req(request);
+
+    nlohmann::json output_tree;
+    const auto error = webhook::send_test();
+    output_tree["status"] = error.empty();
+    if (!error.empty()) {
+      output_tree["error"] = error;
+    }
+    send_response(response, output_tree);
+  }
+
+  /**
    * @brief Shell: remove the virtual display and give the desktop back to the monitors; the app
    * keeps running. Streaming clients are disconnected first.
    * @param response The HTTP response object.
@@ -1907,6 +1994,9 @@ namespace confighttp {
     server.resource["^/api/shell/sessions$"]["GET"] = getShellSessions;
     server.resource["^/api/shell/live$"]["GET"] = getShellLive;
     server.resource["^/api/shell/display/release$"]["POST"] = releaseVirtualDisplay;
+    server.resource["^/api/shell/webhook$"]["GET"] = getShellWebhook;
+    server.resource["^/api/shell/webhook/secret$"]["POST"] = saveShellWebhookSecret;
+    server.resource["^/api/shell/webhook/test$"]["POST"] = sendShellWebhookTest;
     server.resource["^/api/restart$"]["POST"] = restart;
     server.resource["^/api/quit$"]["POST"] = quit;
     server.resource["^/api/reset-display-device-persistence$"]["POST"] = resetDisplayDevicePersistence;

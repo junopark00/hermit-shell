@@ -43,6 +43,7 @@ extern "C" {
 #include "system_tray.h"
 #include "thread_safe.h"
 #include "utility.h"
+#include "webhook.h"
 
 #define IDX_START_A 0
 #define IDX_START_B 1
@@ -2302,45 +2303,63 @@ namespace stream {
       }
     }
 
+    /// The session's fields known at its start (the first part of the record): client, app and
+    /// the stream the client asked for. Also the webhook stream.started event.
+    nlohmann::ordered_json start_entry(const session_t &session) {
+      static constexpr const char *codecs[] = {"H.264", "HEVC", "AV1"};
+      const auto &monitor = session.config.monitor;
+
+      nlohmann::ordered_json entry;
+      entry["client"] = session.device_name;
+      if (!session.device_uuid.empty()) {
+        entry["client_uuid"] = session.device_uuid;
+      }
+      entry["app"] = session.app_name;
+      entry["width"] = monitor.width;
+      entry["height"] = monitor.height;
+      entry["fps"] = monitor.framerate;
+      entry["bitrate_kbps"] = std::atomic_ref<int>(const_cast<int &>(session.config.streamBitrateKbps)).load(std::memory_order_relaxed);
+      if (monitor.videoFormat >= 0 && monitor.videoFormat < 3) {
+        entry["codec"] = codecs[monitor.videoFormat];
+      }
+      // The client asked for 10-bit (HDR) video; whether HDR was on depends on the display.
+      entry["hdr"] = monitor.dynamicRange != 0;
+      return entry;
+    }
+
+    /// The session record (docs/features.md "Session history"); also the webhook stream.ended event.
+    nlohmann::ordered_json record_entry(const session_t &session, std::chrono::system_clock::time_point ended_at) {
+      const auto duration = std::chrono::duration_cast<std::chrono::seconds>(ended_at - session.started_at).count();
+
+      nlohmann::ordered_json entry;
+      entry["started"] = local_time(session.started_at);
+      entry["ended"] = local_time(ended_at);
+      entry["duration_s"] = std::max<std::int64_t>(duration, 0);
+      for (auto &[key, value] : start_entry(session).items()) {
+        entry[key] = std::move(value);
+      }
+      entry["pacing_mbps"] = std::atomic_ref<int>(const_cast<int &>(session.config.videoPacingMbps)).load(std::memory_order_relaxed);
+      entry["pacing_auto"] = session.config.videoPacingAuto;
+      entry["fec_percent"] = config::stream.fec_percentage;
+      // Local cursor: "local" when the client drew the cursor itself at any time
+      entry["cursor"] = session.cursor.ever_local.load(std::memory_order_relaxed) ? "local" : "host";
+      if (const char *reason = session.end_reason.load()) {
+        entry["end_reason"] = reason;
+      }
+      // Encode time guard: only once at least one second was measured
+      if (const auto &budget = session.encode_budget; budget && budget->evaluated_s.load(std::memory_order_relaxed) > 0) {
+        entry["encode_budget_max_pct"] = budget->max_pct.load(std::memory_order_relaxed);
+        entry["encode_budget_exceeded"] = budget->ever_exceeded.load(std::memory_order_relaxed);
+      }
+      return entry;
+    }
+
     void record(const session_t &session, std::chrono::system_clock::time_point ended_at) {
       try {
-        static constexpr const char *codecs[] = {"H.264", "HEVC", "AV1"};
-        const auto &monitor = session.config.monitor;
-        const auto duration = std::chrono::duration_cast<std::chrono::seconds>(ended_at - session.started_at).count();
-
-        nlohmann::ordered_json entry;
-        entry["started"] = local_time(session.started_at);
-        entry["ended"] = local_time(ended_at);
-        entry["duration_s"] = std::max<std::int64_t>(duration, 0);
-        entry["client"] = session.device_name;
-        if (!session.device_uuid.empty()) {
-          entry["client_uuid"] = session.device_uuid;
-        }
-        entry["app"] = session.app_name;
-        entry["width"] = monitor.width;
-        entry["height"] = monitor.height;
-        entry["fps"] = monitor.framerate;
-        entry["bitrate_kbps"] = std::atomic_ref<int>(const_cast<int &>(session.config.streamBitrateKbps)).load(std::memory_order_relaxed);
-        if (monitor.videoFormat >= 0 && monitor.videoFormat < 3) {
-          entry["codec"] = codecs[monitor.videoFormat];
-        }
-        // The client asked for 10-bit (HDR) video; whether HDR was on depends on the display.
-        entry["hdr"] = monitor.dynamicRange != 0;
-        entry["pacing_mbps"] = std::atomic_ref<int>(const_cast<int &>(session.config.videoPacingMbps)).load(std::memory_order_relaxed);
-        entry["pacing_auto"] = session.config.videoPacingAuto;
-        entry["fec_percent"] = config::stream.fec_percentage;
-        // Local cursor: "local" when the client drew the cursor itself at any time
-        entry["cursor"] = session.cursor.ever_local.load(std::memory_order_relaxed) ? "local" : "host";
-        if (const char *reason = session.end_reason.load()) {
-          entry["end_reason"] = reason;
-        }
-        // Encode time guard: only once at least one second was measured
-        if (const auto &budget = session.encode_budget; budget && budget->evaluated_s.load(std::memory_order_relaxed) > 0) {
-          entry["encode_budget_max_pct"] = budget->max_pct.load(std::memory_order_relaxed);
-          entry["encode_budget_exceeded"] = budget->ever_exceeded.load(std::memory_order_relaxed);
-        }
-
+        auto entry = record_entry(session, ended_at);
         append(entry.dump(-1, ' ', false, nlohmann::ordered_json::error_handler_t::replace));
+        // Shell: the webhook gets the same fields (queued only; nothing is sent from here)
+        webhook::enqueue("stream.ended", std::move(entry), session.control.expected_peer_address);
       } catch (const std::exception &e) {
         BOOST_LOG(warning) << "Session history: couldn't record the session: "sv << e.what();
       }
@@ -2646,6 +2665,13 @@ namespace stream {
       session.videoThread = std::thread {videoThread, &session};
 
       session.state.store(state_e::RUNNING, std::memory_order_relaxed);
+
+      // Shell: webhook stream.started (queued only)
+      try {
+        webhook::enqueue("stream.started", session_history::start_entry(session), addr_string);
+      } catch (const std::exception &e) {
+        BOOST_LOG(warning) << "Webhook stream.started not queued: "sv << e.what();
+      }
 
       // If this is the first session, invoke the platform callbacks
       if (++running_sessions == 1) {

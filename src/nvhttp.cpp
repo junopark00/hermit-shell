@@ -46,6 +46,7 @@
 #include "utility.h"
 #include "uuid.h"
 #include "video.h"
+#include "webhook.h"
 #include "zwpad.h"
 
 #ifdef _WIN32
@@ -598,6 +599,7 @@ namespace nvhttp {
       if (it->second.last_phase == PAIR_PHASE::NONE && now - it->second.created >= pair_pin_timeout) {
         BOOST_LOG(info) << "Pairing request of [" << it->second.client.name << "] expired: no PIN was entered within 5 minutes";
         answer_waiting_request(it->second, "No PIN was entered in time");
+        webhook::pairing_failed(it->second.client.name, "No PIN was entered in time", it->second.client_address);
         it = map_id_sess.erase(it);
       } else {
         ++it;
@@ -618,8 +620,13 @@ namespace nvhttp {
     // Security measure, delete the session when something went wrong and force a re-pair.
     // Shell: a request it still keeps waiting for the PIN gets the same reason.
     const auto unique_id = sess.client.uniqueID;
+    // Shell: webhook pairing.failed with the same reason (sess is still valid: erase_session only
+    // drops the map entry, and sess may be the map's own; copy first)
+    const auto client_name = sess.client.name;
+    const auto client_address = sess.client_address;
     erase_session(unique_id, status_msg);
     BOOST_LOG(warning) << "Pair attempt failed due to " << status_msg;
+    webhook::pairing_failed(client_name, status_msg, client_address);
   }
 
   void getservercert(pair_session_t &sess, pt::ptree &tree, const std::string &pin) {
@@ -787,6 +794,8 @@ namespace nvhttp {
     } else {
       tree.put("root.paired", 0);
       BOOST_LOG(warning) << "Pair attempt failed due to same_hash: " << same_hash << ", verify: " << verify;
+      // Shell: a wrong PIN ends here (the hash covers the PIN), as does a tampered certificate
+      webhook::pairing_failed(client.name, "PIN or certificate check failed", sess.client_address);
     }
 
     remove_session(sess);
@@ -887,6 +896,7 @@ namespace nvhttp {
           tree.put("root.paired", 0);
           tree.put("root.<xmlattr>.status_code", 400);
           tree.put("root.<xmlattr>.status_message", std::string {pair_rate_limited_message});
+          webhook::pairing_failed(get_arg(args, "devicename"), std::string {pair_rate_limited_message}, client_address);
           return;
         }
 
@@ -972,12 +982,13 @@ namespace nvhttp {
       auto pairingsecret = util::from_hex_vec(it->second, true);
       std::optional<std::string> paired_name;
       clientpairingsecret(sess_it->second, tree, pairingsecret, paired_name);
-#if defined SHELL_TRAY && SHELL_TRAY >= 1
       if (paired_name) {
+        webhook::pairing_succeeded(*paired_name, client_address);
+#if defined SHELL_TRAY && SHELL_TRAY >= 1
         // Shell: queued for the tray thread (see getservercert above)
         system_tray::queue_paired(std::move(*paired_name));
-      }
 #endif
+      }
     } else {
       tree.put("root.<xmlattr>.status_code", 404);
       tree.put("root.<xmlattr>.status_message", "Invalid pairing request");
@@ -1101,6 +1112,7 @@ namespace nvhttp {
     // were refused, this one was not); it is answered like a failed pairing, and the page says why
     if (pair_rate_limited(sess.client_address, false)) {
       BOOST_LOG(warning) << "PIN not handed to [" << sess.client.name << "]: its address is over the pairing limit";
+      webhook::pairing_failed(sess.client.name, std::string {pair_rate_limited_message}, sess.client_address);
       // a copy: the key would otherwise live in the session being erased
       const auto unique_id = sess.client.uniqueID;
       erase_session(unique_id, std::string {pair_rate_limited_message});

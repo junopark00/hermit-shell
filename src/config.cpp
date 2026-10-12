@@ -631,6 +631,10 @@ namespace config {
     {},  // server commands
     10,  // pair_rate_limit_count
     60,  // pair_rate_limit_seconds
+    {},  // webhook_url (empty: webhooks off)
+    "pairing,stream,app",  // webhook_events
+    false,  // webhook_include_client_ip
+    false,  // webhook_allow_http_private
   };
 
   bool endline(char ch) {
@@ -1341,6 +1345,12 @@ namespace config {
     // Shell: pairing attempts per client address; 0 turns the limit off
     int_between_f(vars, "pair_rate_limit_count", shell.pair_rate_limit_count, {0, std::numeric_limits<int>::max()});
     int_between_f(vars, "pair_rate_limit_seconds", shell.pair_rate_limit_seconds, {0, std::numeric_limits<int>::max()});
+    // Shell: webhooks; the URL is checked by webhook::start() (https://, no userinfo), which turns
+    // webhooks off with one warning when it is not accepted
+    string_f(vars, "webhook_url", shell.webhook_url);
+    string_f(vars, "webhook_events", shell.webhook_events);
+    bool_f(vars, "webhook_include_client_ip", shell.webhook_include_client_ip);
+    bool_f(vars, "webhook_allow_http_private", shell.webhook_allow_http_private);
     bool_f(vars, "envvar_compatibility_mode", shell.envvar_compatibility_mode);
     bool_f(vars, "legacy_ordering", shell.legacy_ordering);
     bool_f(vars, "forward_rumble", input.forward_rumble);

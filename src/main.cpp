@@ -23,6 +23,7 @@
 #include "upnp.h"
 #include "uuid.h"
 #include "video.h"
+#include "webhook.h"
 
 #ifdef _WIN32
   #include "platform/windows/clipboard_helper.h"
@@ -448,6 +449,9 @@ int run_main(int argc, char *argv[]) {
     return -1;
   }
 
+  // Shell: webhook notifications (off without webhook_url); the thread only starts with a valid URL
+  webhook::start();
+
   std::unique_ptr<platf::deinit_t> mDNS;
   auto sync_mDNS = std::async(std::launch::async, [&mDNS]() {
     if (config::shell.enable_discovery) {
@@ -499,6 +503,7 @@ int run_main(int argc, char *argv[]) {
   httpThread.join();
   configThread.join();
   rtspThread.join();
+  webhook::stop();
 
   task_pool.stop();
   task_pool.join();

@@ -40,6 +40,7 @@
 #include "utility.h"
 #include "video.h"
 #include "uuid.h"
+#include "webhook.h"
 
 #ifdef _WIN32
   // from_utf8() string conversion function
@@ -462,6 +463,7 @@ namespace proc {
     allow_client_commands = false;
     placebo = true;
 
+    webhook::app_started(_app_name);
 #if defined SHELL_TRAY && SHELL_TRAY >= 1
     system_tray::update_tray_playing(_app_name);
 #endif
@@ -878,6 +880,7 @@ namespace proc {
 
     fg.disable();
 
+    webhook::app_started(_app.name);
 #if defined SHELL_TRAY && SHELL_TRAY >= 1
     system_tray::update_tray_playing(_app.name);
 #endif
@@ -1410,11 +1413,12 @@ namespace proc {
 #ifdef _WIN32
     vdisplay_lock.unlock();
 #endif
-#if defined SHELL_TRAY && SHELL_TRAY >= 1
     if (!stopped_app.empty()) {
+      webhook::app_ended(stopped_app);
+#if defined SHELL_TRAY && SHELL_TRAY >= 1
       system_tray::update_tray_stopped(stopped_app);
-    }
 #endif
+    }
   }
 
   const std::vector<ctx_t> &proc_t::get_apps() const {
