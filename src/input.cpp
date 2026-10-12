@@ -152,6 +152,22 @@ namespace input {
     button_state_e back_button_state;
   };
 
+  /**
+   * @brief Tracks the side-specific client keys that contribute to one modifier flag.
+   *
+   * Left, right and side-less variants of a modifier all set the same bit in
+   * `input_t::shortcutFlags`, so a release may only clear that bit once none of them is held.
+   */
+  struct modifier_state_t {
+    [[nodiscard]] bool any_pressed() const {
+      return generic_pressed || left_pressed || right_pressed;
+    }
+
+    bool generic_pressed = false;  ///< Side-less modifier key (e.g. VKEY_SHIFT) is pressed.
+    bool left_pressed = false;  ///< Left modifier key is pressed.
+    bool right_pressed = false;  ///< Right modifier key is pressed.
+  };
+
   struct input_t {
     enum shortkey_e {
       CTRL = 0x1,  ///< Control key
@@ -177,6 +193,12 @@ namespace input {
 
     // Keep track of alt+ctrl+shift key combo
     int shortcutFlags;
+
+    // Client-side modifier keys currently held, tracked on the unmapped key code
+    // so they stay in step with the client's `modifiers` bitmask.
+    modifier_state_t shift_keys;
+    modifier_state_t control_keys;
+    modifier_state_t alt_keys;
 
     std::vector<gamepad_t> gamepads;
     std::unique_ptr<platf::client_input_t> client_context;
@@ -626,15 +648,62 @@ namespace input {
   }
 
   /**
-   * @brief Update flags for keyboard shortcut combo's
+   * @brief Update the side-specific state for a client modifier key.
+   * @param input The input context tracking the modifier keys.
+   * @param keyCode The client's (unmapped) virtual-key code.
+   * @param release Whether the key event is a release.
    */
-  inline void update_shortcutFlags(int *flags, short keyCode, bool release) {
+  void update_modifier_state(input_t &input, short keyCode, bool release) {
+    const bool pressed = !release;
+    switch (keyCode) {
+      case VKEY_SHIFT:
+        input.shift_keys.generic_pressed = pressed;
+        break;
+      case VKEY_LSHIFT:
+        input.shift_keys.left_pressed = pressed;
+        break;
+      case VKEY_RSHIFT:
+        input.shift_keys.right_pressed = pressed;
+        break;
+      case VKEY_CONTROL:
+        input.control_keys.generic_pressed = pressed;
+        break;
+      case VKEY_LCONTROL:
+        input.control_keys.left_pressed = pressed;
+        break;
+      case VKEY_RCONTROL:
+        input.control_keys.right_pressed = pressed;
+        break;
+      case VKEY_MENU:
+        input.alt_keys.generic_pressed = pressed;
+        break;
+      case VKEY_LMENU:
+        input.alt_keys.left_pressed = pressed;
+        break;
+      case VKEY_RMENU:
+        input.alt_keys.right_pressed = pressed;
+        break;
+      default:
+        break;
+    }
+  }
+
+  /**
+   * @brief Update flags for keyboard shortcut combo's
+   * @param input The input context; `shortcutFlags` and the side-specific modifier state.
+   * @param keyCode The client's (unmapped) virtual-key code.
+   * @param release Whether the key event is a release.
+   */
+  inline void update_shortcutFlags(input_t &input, short keyCode, bool release) {
+    int *flags = &input.shortcutFlags;
     switch (keyCode) {
       case VKEY_SHIFT:
       case VKEY_LSHIFT:
       case VKEY_RSHIFT:
         if (release) {
-          *flags &= ~input_t::SHIFT;
+          if (!input.shift_keys.any_pressed()) {
+            *flags &= ~input_t::SHIFT;
+          }
         } else {
           *flags |= input_t::SHIFT;
         }
@@ -643,7 +712,9 @@ namespace input {
       case VKEY_LCONTROL:
       case VKEY_RCONTROL:
         if (release) {
-          *flags &= ~input_t::CTRL;
+          if (!input.control_keys.any_pressed()) {
+            *flags &= ~input_t::CTRL;
+          }
         } else {
           *flags |= input_t::CTRL;
         }
@@ -651,8 +722,12 @@ namespace input {
       case VKEY_MENU:
       case VKEY_LMENU:
       case VKEY_RMENU:
+        // Left, right and side-less Alt share the ALT bit, so releasing one of them
+        // must not clear it while another is still held.
         if (release) {
-          *flags &= ~input_t::ALT;
+          if (!input.alt_keys.any_pressed()) {
+            *flags &= ~input_t::ALT;
+          }
         } else {
           *flags |= input_t::ALT;
         }
@@ -727,6 +802,8 @@ namespace input {
     auto release = util::endian::little(packet->header.magic) == KEY_UP_EVENT_MAGIC;
     auto keyCode = packet->keyCode & 0x00FF;
 
+    update_modifier_state(*input, keyCode, release);
+
     // Set synthetic modifier flags if the keyboard packet is requesting modifier
     // keys that are not current pressed.
     uint8_t synthetic_modifiers = 0;
@@ -771,7 +848,11 @@ namespace input {
 
     send_key_and_modifiers(keyCode, release, packet->flags, synthetic_modifiers);
 
-    update_shortcutFlags(&input->shortcutFlags, map_keycode(keyCode), release);
+    // Track the modifier state the client is holding, not the remapped host key: the flags
+    // are compared against packet->modifiers above, which is client-side. A keybinding that
+    // moves Alt off VKEY_*MENU (e.g. "Right Alt to Win") must not clear the ALT bit here,
+    // otherwise every following key would be wrapped in a synthetic Alt press/release.
+    update_shortcutFlags(*input, keyCode, release);
   }
 
   /**
@@ -1661,7 +1742,10 @@ namespace input {
           // already released
           continue;
         }
-        platf::keyboard_update(platf_input, vk_from_kpid(kp.first) & 0x00FF, true, flags_from_kpid(kp.first));
+        // key_press is keyed on the client's unmapped virtual-key code, but the press was
+        // emitted through map_keycode(). Release the host key that actually went down,
+        // otherwise a remapped key stays latched after the client disconnects.
+        platf::keyboard_update(platf_input, map_keycode(vk_from_kpid(kp.first) & 0x00FF), true, flags_from_kpid(kp.first));
         key_press[kp.first] = false;
       }
     });
