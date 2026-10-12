@@ -68,7 +68,9 @@ editor.
   that it is paired; the page says so, asks to start pairing again on the device if it reports a wrong
   PIN, and reloads the device list 3 and 10 seconds later so a finished pairing shows up. The other
   reasons (`status` false) are `no-client` (no device is waiting for a PIN), `invalid-pin` (not four
-  digits) and `failed` (the waiting device's request was invalid; it was told pairing failed).
+  digits), `failed` (the waiting device's request was invalid; it was told pairing failed) and
+  `rate-limited` (the waiting device's address is over the pairing limit below; its attempt was ended
+  with "Too many pairing attempts; try again later", and the page asks to start again later).
 - A device that starts pairing again replaces its earlier unfinished attempt (after a wrong PIN or a
   dropped connection), so a wrong PIN never blocks the next try. If the earlier attempt is still
   waiting for a PIN, its request is answered with a failed pairing (`status_code` 400, "Superseded by
@@ -87,11 +89,28 @@ editor.
   pairing the reply is `status_code` 400 ("Unpair this device in the host's web UI"), so a client's
   Unpair command shows an error instead of a false success. Paired devices are removed under
   **Device Management**. Over HTTPS `/unpair` still answers 404.
+- `/unpair` is accepted only from the address that started the unfinished pairing (the peer address
+  of the socket; Shell reads no forwarding headers, a reverse proxy is not supported). From any other
+  address the reply is the same `status_code` 400 as without an unfinished pairing, so the request
+  does not tell whether one exists; the log gets one line at info level. Both Hermit clients send
+  `/unpair` from the device that started the pairing, so nothing changes for them.
+- **Pairing limit per address**: a client address gets `pair_rate_limit_count` pairing attempts per
+  `pair_rate_limit_seconds` (defaults 10 per 60 seconds; the window starts with the address's first
+  attempt). The start of a pairing (`/pair` getservercert) and each `/unpair` count as one attempt,
+  so a pairing that a device cancels, or fails with a wrong PIN, counts twice. Over the limit,
+  `/pair` and `/unpair` answer `status_code` 400 ("Too many pairing attempts; try again later"), the
+  shape of a failed pairing, so clients show their usual pairing failure and no attempt is kept; a
+  later phase of a pairing already under way is failed the same way; and a pairing that is waiting
+  for the PIN is ended with that message when the PIN is entered (reason `rate-limited`). The first
+  refusal of an address in a window is logged as a warning. The keys are set in `config\shell.conf`
+  (there is no toggle on the config page, which keeps keys it does not show):
+  `pair_rate_limit_count = 10` and `pair_rate_limit_seconds = 60`; 0 in either turns the limit off.
 - Limitation: unfinished pairing attempts are told apart only by the client's uniqueid. Stock
   Moonlight-style clients (and older Hermit for Android) all send the same one, `0123456789ABCDEF`,
   so a pairing attempt from one such device replaces another such device's unfinished attempt, and
-  `/unpair` (unauthenticated, over HTTP) cancels the unfinished attempt of that uniqueid whichever
-  device started it. Paired devices are identified by their certificate and are never affected.
+  `/unpair` (unauthenticated, over HTTP) from the same address cancels the unfinished attempt of that
+  uniqueid whichever device behind that address started it. Paired devices are identified by their
+  certificate and are never affected.
   Hermit for Windows sends a per-install id, and Hermit for Android sends one for pairing (the
   shared id with NVIDIA GameStream hosts).
 - **Prefill for companion clients**: Hermit and Hermit for Android open
@@ -182,6 +201,25 @@ Ctrl+Alt+Del from a client, the service calls `SendSAS`, which opens the secure 
 user, Task Manager, sign-out). This needs the `SoftwareSASGeneration` policy to allow services, which
 `Install-Shell.ps1` sets on install and update. When Shell is not running as a service, or the policy is
 missing, the keys are passed through unchanged and Shell logs a warning once.
+
+## Remapped keys
+
+`keybindings` (and the **Right Alt → Win** option, which is a remap of `0xA5` to `0x5B`) change the key
+that reaches the host. Shell keeps two things straight (taken from upstream Sunshine PR #5558):
+
+- Modifier state follows the key the client is holding, not the remapped host key. While a remapped Alt
+  is held, other keys are no longer wrapped in an extra synthetic Alt press and release.
+- When a stream ends or a client drops, Shell releases the host key that was actually pressed, so a
+  remapped modifier such as Win is not left held.
+
+## Virtual audio sink with several clients
+
+On Windows, when **Keep virtual sink as default** is on and another program changes the default playback
+device, Shell switches back to the virtual sink. With several clients streaming at once, each client's
+capture thread could try this at the same time. The switch is now serialised with a lock, and the sink to
+restore is read when the change happens rather than when the capture started, so a client that joined
+before the first client finished switching still restores it after the first client leaves (from
+foundation-sunshine PR #1099).
 
 ## Clipboard
 
