@@ -1056,9 +1056,12 @@ namespace stream {
 
     const bool force = c.resync.exchange(false, std::memory_order_acquire);
     if (force) {
-      // The client may have dropped its cache (reconnect, mode toggle): offer every shape again
+      // The client may have dropped its cache (reconnect, mode toggle): offer every shape again.
+      // No shape counts as sent any more, so a state sent while the shape waits for the rate
+      // limit names none (the client shows its default arrow until the shape arrives).
       c.shape_gen = 0;
       c.state_gen = 0;
+      c.shape_id = 0;
       c.sent_ids.clear();
     }
 
