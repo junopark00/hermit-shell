@@ -1046,19 +1046,16 @@ namespace stream {
   /**
    * @brief Shell: bring one session that asked for a local cursor up to date with the cursor bus
    *        (control thread, session list locked, peer connected). A shape the client does not hold
-   *        yet goes out as CURSOR_SHAPE (at most one per cursor_shape_interval), every change of
-   *        shape, visibility or host composing as CURSOR_STATE (animation frames at most one per
-   *        cursor_state_interval). Whatever is skipped is caught up on a later pass with the newest
-   *        bus contents, so the newest state always wins.
+   *        goes out as CURSOR_SHAPE, a change of shape, visibility or host composing as CURSOR_STATE,
+   *        each rate limited; what is skipped is caught up on a later pass with the newest bus contents.
    */
   void relay_cursor(session_t *session, const platf::cursor_bus::snapshot_t &bus, bool host_composing, std::chrono::steady_clock::time_point now) {
     auto &c = session->cursor;
 
     const bool force = c.resync.exchange(false, std::memory_order_acquire);
     if (force) {
-      // The client may have dropped its cache (reconnect, mode toggle): offer every shape again.
-      // No shape counts as sent any more, so a state sent while the shape waits for the rate
-      // limit names none (the client shows its default arrow until the shape arrives).
+      // The client may have dropped its cache (reconnect, mode toggle): every shape is offered again,
+      // and a state sent before the shape names none (the client shows its default arrow meanwhile)
       c.shape_gen = 0;
       c.state_gen = 0;
       c.shape_id = 0;
@@ -1345,7 +1342,7 @@ namespace stream {
     auto broadcast_shutdown_event = mail::man->event<bool>(mail::broadcast_shutdown);
     while (!shutdown_event->peek() && !broadcast_shutdown_event->peek()) {
       bool has_session_awaiting_peer = false;
-      bool cursor_relay_active = false;  // Shell: a session draws the cursor itself; poll the bus often
+      bool cursor_relay_active = false;  // Shell: a session draws the cursor itself
 
       {
         auto lg = server->_sessions.lock();

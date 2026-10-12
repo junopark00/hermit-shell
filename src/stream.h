@@ -97,10 +97,8 @@ namespace stream {
     std::string live_info_json(const session_t &session);
 
     /**
-     * @brief Shell: local cursor (docs/features.md "Local cursor"). The client draws the cursor
-     *        itself (`local`: the host sends its shape and visibility over the control stream and
-     *        leaves it out of the video once every session asked for this) or sees it in the video
-     *        (`host`, the default). Called from the HTTPS thread for a running session.
+     * @brief Shell: whether the client draws the cursor itself (docs/features.md "Local cursor").
+     *        HTTPS thread, for a running session.
      */
     void set_local_cursor(session_t &session, bool local);
   }  // namespace session

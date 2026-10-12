@@ -14,7 +14,6 @@
 // The adapter list for the Wake-on-LAN check (iptypes.h declares IP_ADAPTER_ADDRESSES only after winsock2.h)
 #include <winsock2.h>
 #include <iphlpapi.h>
-// GetPwrCapabilities, SetSuspendState, DevicePowerEnumDevices
 #include <powrprof.h>
 
 #include "src/utility.h"

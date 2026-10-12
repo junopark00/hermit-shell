@@ -439,7 +439,7 @@ namespace video {
       return result;
     }
 
-    // Shell: NVENC engines on the GPU (0 = unknown), for the encode time guard's warning
+    // Shell: encode time guard; 0 when unknown
     int encoder_engines() const {
       return device && device->nvenc ? device->nvenc->encoder_engines() : 0;
     }
@@ -468,13 +468,8 @@ namespace video {
     std::shared_ptr<encode_budget_t> encode_budget;  // Shell: encode time guard output (may be null)
   };
 
-  /**
-   * Shell: encode time guard (docs/features.md "Encode time guard").
-   *
-   * One tracker per encoder instance: it collects the wall time of every encode() call and once a
-   * second compares the 90th percentile with the frame interval. The result goes to the stream's
-   * encode_budget_t; nothing is logged per frame.
-   */
+  // Shell: encode time guard (docs/features.md "Encode time guard"); one tracker_t per encoder
+  // instance, its results in the stream's encode_budget_t (video.h)
   namespace encode_budget {
     constexpr int exceed_pct = 65;  // above this for streak_s seconds: the budget is exceeded
     constexpr int clear_pct = 50;  // below this for streak_s seconds: cleared again (hysteresis)
@@ -656,9 +651,8 @@ namespace video {
       int below_s = 0;
     };
 
-    // A tracker for this encoder session: the NVENC preset the encoder was really created with (read
-    // back from the encoder, so it is exact even with two concurrent streams of the same geometry)
-    // and the GPU's engine count (both 0 for other encoders)
+    // The preset is read back from the encoder: exact even with two concurrent streams of the same
+    // geometry (0 for other encoders, as is the engine count)
     tracker_t make_tracker(std::shared_ptr<encode_budget_t> out, const encode_session_t &session, const config_t &config) {
       auto nvenc_session = dynamic_cast<const nvenc_encode_session_t *>(&session);
       return tracker_t {std::move(out), config, nvenc_session ? nvenc_session->quality_preset() : 0, nvenc_session ? nvenc_session->encoder_engines() : 0};
@@ -2430,7 +2424,6 @@ namespace video {
     }
 
     encode_session.session = std::move(session);
-    // Shell: encode time guard
     encode_session.budget = encode_budget::make_tracker(ctx.encode_budget, *encode_session.session, ctx.config);
 
     return encode_session;

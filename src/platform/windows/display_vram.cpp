@@ -1190,7 +1190,7 @@ namespace platf::dxgi {
         return capture_e::error;
       }
 
-      // Shell: a copy of the raw shape for clients that draw the cursor themselves (local cursor)
+      // Shell: local cursor
       publish_cursor_shape(shape_info, std::begin(img_data), img_data.size());
 
       auto alpha_cursor_img = make_cursor_alpha_image(img_data, shape_info);

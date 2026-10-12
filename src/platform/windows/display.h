@@ -24,10 +24,8 @@ namespace platf::dxgi {
   extern const char *format_str[];
 
   /**
-   * @brief Shell: copy a pointer shape that Desktop Duplication just reported to the cursor bus,
-   *        for clients that draw the cursor themselves (local cursor). Capture thread.
-   * @param shape_info The shape description from IDXGIOutputDuplication::GetFramePointerShape().
-   * @param data The shape buffer it filled, `size` bytes.
+   * @brief Shell: copy a pointer shape that Desktop Duplication just reported (GetFramePointerShape)
+   *        to the cursor bus for the local cursor. Capture thread.
    */
   inline void publish_cursor_shape(const DXGI_OUTDUPL_POINTER_SHAPE_INFO &shape_info, const std::uint8_t *data, std::size_t size) {
     cursor_shape::raw_t raw;

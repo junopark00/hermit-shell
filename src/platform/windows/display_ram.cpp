@@ -207,7 +207,7 @@ namespace platf::dxgi {
         return capture_e::error;
       }
 
-      // Shell: a copy of the raw shape for clients that draw the cursor themselves (local cursor)
+      // Shell: local cursor
       publish_cursor_shape(cursor.shape_info, img_data.data(), img_data.size());
     }
 

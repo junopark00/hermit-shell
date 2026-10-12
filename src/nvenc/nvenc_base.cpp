@@ -212,11 +212,10 @@ namespace nvenc {
     }
 
     encoder_params.rfi = get_encoder_cap(NV_ENC_CAPS_SUPPORT_REF_PIC_INVALIDATION);
-    // Shell: read-only, for the log line below and the encode time guard's warning
-    encoder_params.engines = get_encoder_cap(NV_ENC_CAPS_NUM_ENCODER_ENGINES);
+    encoder_params.engines = get_encoder_cap(NV_ENC_CAPS_NUM_ENCODER_ENGINES);  // Shell: encode time guard
 
     init_params.presetGUID = quality_preset_guid_from_number(config.quality_preset);
-    encoder_params.quality_preset = config.quality_preset;  // Shell: read back by the encode time guard
+    encoder_params.quality_preset = config.quality_preset;  // Shell: encode time guard
     init_params.tuningInfo = NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY;
     init_params.enablePTD = 1;
     init_params.enableEncodeAsync = async_event_handle ? 1 : 0;
