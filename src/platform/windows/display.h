@@ -16,11 +16,30 @@
 
 // local includes
 #include "src/platform/common.h"
+#include "src/platform/cursor_bus.h"
 #include "src/utility.h"
 #include "src/video.h"
 
 namespace platf::dxgi {
   extern const char *format_str[];
+
+  /**
+   * @brief Shell: copy a pointer shape that Desktop Duplication just reported to the cursor bus,
+   *        for clients that draw the cursor themselves (local cursor). Capture thread.
+   * @param shape_info The shape description from IDXGIOutputDuplication::GetFramePointerShape().
+   * @param data The shape buffer it filled, `size` bytes.
+   */
+  inline void publish_cursor_shape(const DXGI_OUTDUPL_POINTER_SHAPE_INFO &shape_info, const std::uint8_t *data, std::size_t size) {
+    cursor_shape::raw_t raw;
+    raw.type = shape_info.Type;
+    raw.width = shape_info.Width;
+    raw.height = shape_info.Height;
+    raw.pitch = shape_info.Pitch;
+    raw.hotspot_x = static_cast<std::uint32_t>(std::max<LONG>(shape_info.HotSpot.x, 0));
+    raw.hotspot_y = static_cast<std::uint32_t>(std::max<LONG>(shape_info.HotSpot.y, 0));
+    raw.data.assign(data, data + size);
+    cursor_bus::publish_shape(std::move(raw));
+  }
 
   // Add D3D11_CREATE_DEVICE_DEBUG here to enable the D3D11 debug runtime.
   // You should have a debugger like WinDbg attached to receive debug messages.

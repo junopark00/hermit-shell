@@ -206,12 +206,17 @@ namespace platf::dxgi {
 
         return capture_e::error;
       }
+
+      // Shell: a copy of the raw shape for clients that draw the cursor themselves (local cursor)
+      publish_cursor_shape(cursor.shape_info, img_data.data(), img_data.size());
     }
 
     if (frame_info.LastMouseUpdateTime.QuadPart) {
       cursor.x = frame_info.PointerPosition.Position.x;
       cursor.y = frame_info.PointerPosition.Position.y;
       cursor.visible = frame_info.PointerPosition.Visible;
+
+      cursor_bus::publish_visible(frame_info.PointerPosition.Visible);
     }
 
     if (frame_update_flag) {

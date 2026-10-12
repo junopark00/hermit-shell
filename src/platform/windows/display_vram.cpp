@@ -1190,6 +1190,9 @@ namespace platf::dxgi {
         return capture_e::error;
       }
 
+      // Shell: a copy of the raw shape for clients that draw the cursor themselves (local cursor)
+      publish_cursor_shape(shape_info, std::begin(img_data), img_data.size());
+
       auto alpha_cursor_img = make_cursor_alpha_image(img_data, shape_info);
       auto xor_cursor_img = make_cursor_xor_image(img_data, shape_info);
 
@@ -1203,6 +1206,8 @@ namespace platf::dxgi {
       cursor_alpha.set_pos(frame_info.PointerPosition.Position.x, frame_info.PointerPosition.Position.y, width, height, display_rotation, frame_info.PointerPosition.Visible);
 
       cursor_xor.set_pos(frame_info.PointerPosition.Position.x, frame_info.PointerPosition.Position.y, width, height, display_rotation, frame_info.PointerPosition.Visible);
+
+      cursor_bus::publish_visible(frame_info.PointerPosition.Visible);
     }
 
     const bool blend_mouse_cursor_flag = (cursor_alpha.visible || cursor_xor.visible) && cursor_visible;

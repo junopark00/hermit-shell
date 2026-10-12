@@ -262,7 +262,7 @@ namespace platf::dxgi {
             sleep_overshoot_logger.second_point_now_and_log();
           }
 
-          status = snapshot(pull_free_image_cb, img_out, elastic ? 2ms : std::chrono::duration_cast<std::chrono::milliseconds>(sleep_period), *cursor);
+          status = snapshot(pull_free_image_cb, img_out, elastic ? 2ms : std::chrono::duration_cast<std::chrono::milliseconds>(sleep_period), *cursor && cursor_bus::compose());
 
           if (status == capture_e::ok && img_out) {
             frame_pacing_group_frames += 1;
@@ -275,7 +275,8 @@ namespace platf::dxgi {
 
       // Start new frame pacing group if necessary, snapshot() is called with non-zero timeout
       if (status == capture_e::timeout || (status == capture_e::ok && !frame_pacing_group_start)) {
-        status = snapshot(pull_free_image_cb, img_out, 200ms, *cursor);
+        // Shell: the pointer is left out of the video while every session draws it itself (local cursor)
+        status = snapshot(pull_free_image_cb, img_out, 200ms, *cursor && cursor_bus::compose());
 
         if (status == capture_e::ok && img_out) {
           frame_pacing_group_start = img_out->frame_timestamp;
@@ -999,12 +1000,14 @@ namespace platf {
         auto disp = std::make_shared<dxgi::display_ddup_vram_t>();
 
         if (!disp->init(config, display_name)) {
+          cursor_bus::set_shapes_available(true);
           return disp;
         }
       } else if (hwdevice_type == mem_type_e::system) {
         auto disp = std::make_shared<dxgi::display_ddup_ram_t>();
 
         if (!disp->init(config, display_name)) {
+          cursor_bus::set_shapes_available(true);
           return disp;
         }
       }
@@ -1015,12 +1018,15 @@ namespace platf {
         auto disp = std::make_shared<dxgi::display_wgc_vram_t>();
 
         if (!disp->init(config, display_name)) {
+          // Shell: Windows.Graphics.Capture does not expose the pointer shape (no local cursor)
+          cursor_bus::set_shapes_available(false);
           return disp;
         }
       } else if (hwdevice_type == mem_type_e::system) {
         auto disp = std::make_shared<dxgi::display_wgc_ram_t>();
 
         if (!disp->init(config, display_name)) {
+          cursor_bus::set_shapes_available(false);
           return disp;
         }
       }
