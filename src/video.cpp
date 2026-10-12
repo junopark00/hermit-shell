@@ -3,10 +3,15 @@
  * @brief Definitions for video.
  */
 // standard includes
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <bitset>
 #include <list>
+#include <map>
+#include <mutex>
 #include <thread>
+#include <tuple>
 
 // lib includes
 #include <boost/pointer_cast.hpp>
@@ -434,6 +439,11 @@ namespace video {
       return result;
     }
 
+    // Shell: NVENC engines on the GPU (0 = unknown), for the encode time guard's warning
+    int encoder_engines() const {
+      return device && device->nvenc ? device->nvenc->encoder_engines() : 0;
+    }
+
   private:
     std::unique_ptr<platf::nvenc_encode_device_t> device;
     bool force_idr = false;
@@ -450,11 +460,190 @@ namespace video {
     config_t config;
     int frame_nr;
     void *channel_data;
+    std::shared_ptr<encode_budget_t> encode_budget;  // Shell: encode time guard output (may be null)
   };
+
+  /**
+   * Shell: encode time guard (docs/features.md "Encode time guard").
+   *
+   * One tracker per encoder instance: it collects the wall time of every encode() call and once a
+   * second compares the 90th percentile with the frame interval. The result goes to the stream's
+   * encode_budget_t; nothing is logged per frame.
+   */
+  namespace encode_budget {
+    constexpr int exceed_pct = 65;  // above this for streak_s seconds: the budget is exceeded
+    constexpr int clear_pct = 50;  // below this for streak_s seconds: cleared again (hysteresis)
+    constexpr int streak_s = 10;
+    constexpr int min_frames_per_s = 10;  // seconds with fewer encoded frames are not evaluated
+    constexpr std::size_t max_samples = 1024;  // frames per second kept (enough for 360 fps)
+
+    using geometry_t = std::tuple<int, int, int>;  // width, height, fps
+
+    geometry_t geometry(const config_t &config) {
+      return {config.width, config.height, config.framerate};
+    }
+
+    // The preset guard's memory (nvenc_preset_guard = adjust): the NVENC preset the next session of a
+    // geometry starts with. In memory only; forgotten when nvenc_preset changes or Shell restarts.
+    struct guard_state_t {
+      std::mutex mutex;
+      int configured_preset = 0;  // the nvenc_preset the entries were made for
+      std::map<geometry_t, int> next_preset;
+    };
+
+    guard_state_t guard_state;
+
+    // Caller holds guard_state.mutex
+    void sync_with_config() {
+      const int configured = config::video.nv.quality_preset;
+      if (guard_state.configured_preset != configured) {
+        if (!guard_state.next_preset.empty()) {
+          BOOST_LOG(info) << "NVENC preset guard: nvenc_preset changed to P"sv << configured << ", adjustments forgotten"sv;
+        }
+        guard_state.next_preset.clear();
+        guard_state.configured_preset = configured;
+      }
+    }
+
+    int preset_for(const config_t &config) {
+      std::lock_guard lg {guard_state.mutex};
+      sync_with_config();
+      auto it = guard_state.next_preset.find(geometry(config));
+      return it == guard_state.next_preset.end() ? guard_state.configured_preset : it->second;
+    }
+
+    // The budget was exceeded for the first time in this session: with "adjust", the next session
+    // with the same geometry starts one preset faster. used_preset is 0 for non-NVENC encoders.
+    void on_exceeded(const config_t &config, int used_preset) {
+      if (config::video.nvenc_preset_guard != config::nvenc_preset_guard_e::adjust || used_preset <= 0) {
+        return;
+      }
+      if (used_preset <= 1) {
+        BOOST_LOG(info) << "NVENC preset guard: already at the fastest preset P1, nothing to adjust"sv;
+        return;
+      }
+
+      std::lock_guard lg {guard_state.mutex};
+      sync_with_config();
+      auto [it, inserted] = guard_state.next_preset.try_emplace(geometry(config), used_preset - 1);
+      if (!inserted) {
+        it->second = std::min(it->second, used_preset - 1);  // never slower than an earlier adjustment
+      }
+      BOOST_LOG(info) << "NVENC preset guard: the next "sv << config.width << 'x' << config.height << '@' << config.framerate
+                      << " stream starts with preset P"sv << it->second << " (this one used P"sv << used_preset
+                      << ", nvenc_preset is "sv << guard_state.configured_preset << ')';
+    }
+
+    class tracker_t {
+    public:
+      tracker_t() = default;
+
+      tracker_t(std::shared_ptr<encode_budget_t> out, const config_t &config, int nvenc_preset, int nvenc_engines):
+          out(std::move(out)),
+          config(config),
+          nvenc_preset(nvenc_preset),
+          nvenc_engines(nvenc_engines),
+          frame_interval_us(config.framerate > 0 ? 1000000 / config.framerate : 0),
+          second_start(std::chrono::steady_clock::now()) {
+      }
+
+      bool active() const {
+        return out && frame_interval_us > 0;
+      }
+
+      void add(std::chrono::steady_clock::time_point start, std::chrono::steady_clock::time_point end) {
+        if (!active()) {
+          return;
+        }
+        if (count < samples.size()) {
+          samples[count++] = (std::uint32_t) std::clamp<std::int64_t>(std::chrono::duration_cast<std::chrono::microseconds>(end - start).count(), 0, UINT32_MAX);
+        }
+        if (end - second_start >= 1s) {
+          evaluate();
+          count = 0;
+          second_start = end;
+        }
+      }
+
+    private:
+      void evaluate() {
+        if (count < (std::size_t) min_frames_per_s) {
+          return;  // static content or start-up: too few frames to judge
+        }
+
+        // 90th percentile: the slowest tenth (mostly key frames) does not count
+        auto nth = samples.begin() + std::min(count * 9 / 10, count - 1);
+        std::nth_element(samples.begin(), nth, samples.begin() + count);
+        const int pct = (int) std::min<std::uint64_t>((std::uint64_t) *nth * 100 / frame_interval_us, 100000);
+
+        out->current_pct.store(pct, std::memory_order_relaxed);
+        if (pct > out->max_pct.load(std::memory_order_relaxed)) {
+          out->max_pct.store(pct, std::memory_order_relaxed);
+        }
+        out->evaluated_s.fetch_add(1, std::memory_order_relaxed);
+
+        if (pct > exceed_pct) {
+          ++above_s;
+          below_s = 0;
+        } else if (pct < clear_pct) {
+          ++below_s;
+          above_s = 0;
+        } else {
+          above_s = below_s = 0;  // between the two thresholds: neither streak grows
+        }
+
+        const bool exceeded = out->exceeded.load(std::memory_order_relaxed);
+        if (!exceeded && above_s >= streak_s) {
+          above_s = 0;
+          out->exceeded.store(true, std::memory_order_relaxed);
+          if (!out->ever_exceeded.exchange(true, std::memory_order_relaxed)) {
+            // Once per session
+            std::string encoder_info;
+            if (nvenc_preset > 0) {
+              encoder_info = " preset P" + std::to_string(nvenc_preset);
+              if (nvenc_engines > 0) {
+                encoder_info += ", " + std::to_string(nvenc_engines) + " NVENC engine(s)";
+              }
+            }
+            BOOST_LOG(warning) << "Encoding uses "sv << pct << "% of the frame budget at "sv << config.width << 'x' << config.height
+                               << '@' << config.framerate << encoder_info << "; a faster preset is recommended"sv;
+            on_exceeded(config, nvenc_preset);
+          }
+        } else if (exceeded && below_s >= streak_s) {
+          below_s = 0;
+          out->exceeded.store(false, std::memory_order_relaxed);
+          BOOST_LOG(info) << "Encoding is back under "sv << clear_pct << "% of the frame budget ("sv << pct << "%)"sv;
+        }
+      }
+
+      std::shared_ptr<encode_budget_t> out;
+      config_t config {};
+      int nvenc_preset = 0;  // 0: not NVENC
+      int nvenc_engines = 0;  // 0: unknown
+      std::int64_t frame_interval_us = 0;
+      std::chrono::steady_clock::time_point second_start;
+      std::array<std::uint32_t, max_samples> samples {};
+      std::size_t count = 0;
+      int above_s = 0;
+      int below_s = 0;
+    };
+
+    // A tracker for this encoder session: the NVENC preset it really uses and the GPU's engine
+    // count (both 0 for other encoders)
+    tracker_t make_tracker(std::shared_ptr<encode_budget_t> out, const encode_session_t &session, const config_t &config) {
+      auto nvenc_session = dynamic_cast<const nvenc_encode_session_t *>(&session);
+      return tracker_t {std::move(out), config, nvenc_session ? preset_for(config) : 0, nvenc_session ? nvenc_session->encoder_engines() : 0};
+    }
+  }  // namespace encode_budget
+
+  int nvenc_preset_for(const config_t &config) {
+    return encode_budget::preset_for(config);
+  }
 
   struct sync_session_t {
     sync_session_ctx_t *ctx;
     std::unique_ptr<encode_session_t> session;
+    encode_budget::tracker_t budget;  // Shell: encode time guard
   };
 
   using encode_session_ctx_queue_t = safe::queue_t<sync_session_ctx_t>;
@@ -1929,12 +2118,16 @@ namespace video {
     std::unique_ptr<platf::encode_device_t> encode_device,
     safe::signal_t &reinit_event,
     const encoder_t &encoder,
-    void *channel_data
+    void *channel_data,
+    std::shared_ptr<encode_budget_t> encode_budget
   ) {
     auto session = make_encode_session(disp.get(), encoder, config, disp->width, disp->height, std::move(encode_device));
     if (!session) {
       return;
     }
+
+    // Shell: encode time guard; the stream's budget object outlives this encoder instance
+    auto budget = encode_budget::make_tracker(encode_budget, *session, config);
 
     // As a workaround for NVENC hangs and to generally speed up encoder reinit,
     // we will complete the encoder teardown in a separate thread if supported.
@@ -2080,10 +2273,12 @@ namespace video {
         }
       }
 
+      const auto encode_start = std::chrono::steady_clock::now();
       if (encode(frame_nr++, *session, packets, channel_data, frame_timestamp)) {
         BOOST_LOG(error) << "Could not encode video packet"sv;
         break;
       }
+      budget.add(encode_start, std::chrono::steady_clock::now());
 
       session->request_normal_frame();
     }
@@ -2206,6 +2401,8 @@ namespace video {
     }
 
     encode_session.session = std::move(session);
+    // Shell: encode time guard
+    encode_session.budget = encode_budget::make_tracker(ctx.encode_budget, *encode_session.session, ctx.config);
 
     return encode_session;
   }
@@ -2321,12 +2518,14 @@ namespace video {
             frame_timestamp = img->frame_timestamp;
           }
 
+          const auto encode_start = std::chrono::steady_clock::now();
           if (encode(ctx->frame_nr++, *pos->session, ctx->packets, ctx->channel_data, frame_timestamp)) {
             BOOST_LOG(error) << "Could not encode video packet"sv;
             ctx->shutdown_event->raise(true);
 
             continue;
           }
+          pos->budget.add(encode_start, std::chrono::steady_clock::now());
 
           pos->session->request_normal_frame();
 
@@ -2392,7 +2591,8 @@ namespace video {
   void capture_async(
     safe::mail_t mail,
     config_t &config,
-    void *channel_data
+    void *channel_data,
+    std::shared_ptr<encode_budget_t> encode_budget
   ) {
     auto shutdown_event = mail->event<bool>(mail::shutdown);
 
@@ -2468,7 +2668,8 @@ namespace video {
         std::move(encode_device),
         ref->reinit_event,
         *ref->encoder_p,
-        channel_data
+        channel_data,
+        encode_budget
       );
     }
   }
@@ -2476,13 +2677,14 @@ namespace video {
   void capture(
     safe::mail_t mail,
     config_t config,
-    void *channel_data
+    void *channel_data,
+    std::shared_ptr<encode_budget_t> encode_budget
   ) {
     auto idr_events = mail->event<bool>(mail::idr);
 
     idr_events->raise(true);
     if (chosen_encoder->flags & PARALLEL_ENCODING) {
-      capture_async(std::move(mail), config, channel_data);
+      capture_async(std::move(mail), config, channel_data, std::move(encode_budget));
     } else {
       safe::signal_t join_event;
       auto ref = capture_thread_sync.ref();
@@ -2496,6 +2698,7 @@ namespace video {
         config,
         1,
         channel_data,
+        std::move(encode_budget),
       });
 
       // Wait for join signal

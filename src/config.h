@@ -19,6 +19,12 @@ namespace config {
   // track modified config options
   inline std::unordered_map<std::string, std::string> modified_config_settings;
 
+  // Shell: what the encode time guard does when a stream keeps using more than 65% of its frame interval
+  enum class nvenc_preset_guard_e {
+    notify,  ///< log a warning and show it on the dashboard and in the session record (default)
+    adjust,  ///< as notify, and the next stream with the same resolution and frame rate starts one NVENC preset faster
+  };
+
   struct video_t {
     bool headless_mode;
     bool limit_framerate;
@@ -41,6 +47,7 @@ namespace config {
     bool nv_realtime_hags;
     bool nv_opengl_vulkan_on_dxgi;
     bool nv_high_power_mode;
+    nvenc_preset_guard_e nvenc_preset_guard;  // Shell: encode time guard mode
 
     struct {
       int preset;

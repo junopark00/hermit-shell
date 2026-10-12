@@ -70,7 +70,8 @@
             <tr v-if="!live && liveError"><td colspan="8" class="shell-helper">{{ $t('shell_dashboard.unavailable') }}</td></tr>
             <tr v-else-if="!live"><td colspan="8" class="shell-helper">{{ $t('shell_dashboard.loading') }}</td></tr>
             <tr v-else-if="!live.length"><td colspan="8" class="shell-helper">{{ $t('shell_dashboard.no_live') }}</td></tr>
-            <tr v-for="s in live" :key="liveKey(s)">
+            <template v-for="s in live" :key="liveKey(s)">
+            <tr>
               <td class="shell-name-cell">
                 <span class="shell-status" :class="s.state === 'running' ? 'shell-status-ok' : 'shell-status-off'"></span>
                 {{ s.client || $t('pin.unpair_single_unknown') }}
@@ -91,6 +92,13 @@
                 <span class="shell-helper ms-1" v-if="disconnectError === s.uuid">{{ $t('shell_dashboard.live_disconnect_failed') }}</span>
               </td>
             </tr>
+            <!-- Encode time guard: the encoder keeps using more than 65% of the frame interval -->
+            <tr class="shell-row-note" v-if="s.encode_budget_exceeded">
+              <td colspan="8" class="shell-helper">
+                <span class="shell-status shell-status-warn"></span>{{ $t('shell_dashboard.encode_budget_warn', { pct: s.encode_budget_pct }) }}
+              </td>
+            </tr>
+            </template>
           </tbody>
         </table>
       </div>
@@ -215,7 +223,9 @@
                 <td class="shell-name-cell">{{ s.client || $t('pin.unpair_single_unknown') }}</td>
                 <td>{{ s.app || '-' }}</td>
                 <td class="shell-num text-end text-nowrap">{{ formatDuration(s.duration_s) }}</td>
-                <td class="shell-num text-end text-nowrap" :title="videoDetail(s)">{{ formatVideo(s) }}</td>
+                <td class="shell-num text-end text-nowrap" :title="videoDetail(s)">
+                  <span class="shell-status shell-status-warn" v-if="s.encode_budget_exceeded"></span>{{ formatVideo(s) }}
+                </td>
                 <td class="shell-num text-end text-nowrap" :title="pacingDetail(s)">{{ formatBitrate(s.bitrate_kbps) }}</td>
                 <td class="text-nowrap" :title="endReasonDetail(s.end_reason)">
                   <template v-if="s.end_reason">
@@ -835,6 +845,16 @@ export default {
       if (session.hdr) {
         parts.push(this.$t('shell_dashboard.hdr_requested'));
       }
+      // Encode time guard: live entries carry the current value, history entries the session's peak
+      if (session.encode_budget_pct !== undefined) {
+        parts.push(this.$t('shell_dashboard.encode_budget_detail', { pct: session.encode_budget_pct }));
+      }
+      if (session.encode_budget_max_pct !== undefined) {
+        parts.push(this.$t('shell_dashboard.encode_budget_max', { pct: session.encode_budget_max_pct }));
+        if (session.encode_budget_exceeded) {
+          parts.push(this.$t('shell_dashboard.encode_budget_exceeded'));
+        }
+      }
       return parts.join(' \u00b7 ');
     },
     formatBitrate(kbps) {
@@ -1047,6 +1067,12 @@ export default {
 
 .shell-status-ok { background: var(--shell-success); }
 .shell-status-warn { background: var(--shell-warning); }
+
+/* A note under a live row (encode time guard) */
+.shell-row-note td {
+  border-top: 0;
+  padding-top: 0;
+}
 .shell-status-bad { background: var(--shell-danger, #da1e28); }
 .shell-status-off { background: transparent; box-shadow: inset 0 0 0 1px var(--shell-border-strong); }
 

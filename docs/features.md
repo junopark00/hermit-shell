@@ -28,6 +28,8 @@ file that still uses the Sunshine key `sunshine_name` is read as well.
   - **Streaming now**: one row per active stream with device, app, elapsed time, resolution and frame
     rate, bitrate, round-trip time and recovery requests, refreshed every 2 seconds. A stream can be
     disconnected from its row; the app on the host is paused or closed according to its settings.
+    When the encoder keeps using more than 65% of the frame interval, a warning line under the row
+    recommends a faster preset (see [Encode time guard](#encode-time-guard)).
   - **Paired devices** with their state and permissions.
   - **Recent sessions**: the last 20 sessions from the session history (up to 100 with "Show more").
   - **Install backups** made by `Install-Shell.ps1`, newest first, each with a "Copy rollback command"
@@ -207,6 +209,39 @@ internet paths; spreading it reduces that loss.
 - The host log prints the setting and the effective rate at the start of each session, for example
   `Video pacing [auto 150 Mbps, effective ~146 Mbps]`, together with the FEC percentage and the packet
   size.
+
+## Encode time guard
+
+Shell measures how long the encoder takes for each frame and compares it with the frame interval
+(1000 ms ÷ the frame rate the client asked for: 8.3 ms at 120 fps). Once a second it takes the
+90th percentile of that second's encode times (the slowest tenth, mostly key frames, does not count)
+as a percentage of the interval. Seconds with fewer than 10 encoded frames (static content,
+start-up) are not evaluated. The measurement is the wall time of the encode call on the encoder
+thread, which for NVENC includes waiting for the encoded frame; the colour conversion before it is
+not counted. The cost is two timestamps per frame and one selection over at most 1,024 samples per
+second; nothing is logged per frame.
+
+- Over 65% for 10 consecutive seconds: the stream has exceeded its encode budget. The host log gets
+  one warning per stream (`Encoding uses 78% of the frame budget at 3840x2160@120 preset P7, 2 NVENC
+  engine(s); a faster preset is recommended`), the dashboard's **Streaming now** table shows a warning line under
+  the row and the session record notes it. Under 50% for 10 consecutive seconds clears the mark
+  again (an `info` line); seconds between 50% and 65% end both streaks.
+- `GET /api/shell/live` session entries carry `encode_budget_pct` (the last evaluated second) and
+  `encode_budget_exceeded`; the [session record](#session-history) carries `encode_budget_max_pct`
+  and `encode_budget_exceeded` (true when the budget was exceeded at any time). All of them are
+  omitted until the first second has been evaluated.
+- `nvenc_preset_guard` (**Settings > NVIDIA NVENC Encoder > Encode time guard**):
+  - `notify` (default): only the warning above.
+  - `adjust`: in addition, the next stream at the same resolution and frame rate starts one NVENC
+    preset faster than the one that exceeded the budget (P7 → P6 → … → P1, never below P1), and the
+    log says so (`NVENC preset guard: the next 3840x2160@120 stream starts with preset P6 (this one
+    used P7, nvenc_preset is 7)`). A running stream is never changed: reconfiguring the encoder
+    mid-stream risks a broken picture. The adjustment lives in memory only; a Shell restart or a
+    change of `nvenc_preset` starts again from the configured preset. It applies to the NVENC
+    encoder; other encoders get the warning only.
+- The NVENC encoder's start-up log line (`NvEnc: created encoder ...`) also names the number of
+  encoder engines on the GPU (`engines 2`, from `NV_ENC_CAPS_NUM_ENCODER_ENGINES`) when the driver
+  reports it. It is informational only.
 
 ## Live bitrate changes
 
@@ -421,7 +456,7 @@ When the file exceeds 1 MB or 5,000 lines, the older half is dropped (written to
 swapped in). A failure to write is logged and never affects streaming.
 
 ```json
-{"started":"2026-09-30T21:04:11","ended":"2026-09-30T22:15:40","duration_s":4289,"client":"Tablet","client_uuid":"0123-ABCD","app":"Desktop","width":2560,"height":1440,"fps":120,"bitrate_kbps":50000,"codec":"HEVC","hdr":false,"pacing_mbps":150,"pacing_auto":true,"fec_percent":20,"end_reason":"disconnect"}
+{"started":"2026-09-30T21:04:11","ended":"2026-09-30T22:15:40","duration_s":4289,"client":"Tablet","client_uuid":"0123-ABCD","app":"Desktop","width":2560,"height":1440,"fps":120,"bitrate_kbps":50000,"codec":"HEVC","hdr":false,"pacing_mbps":150,"pacing_auto":true,"fec_percent":20,"end_reason":"disconnect","encode_budget_max_pct":41,"encode_budget_exceeded":false}
 ```
 
 | Field | Meaning |
@@ -435,6 +470,8 @@ swapped in). A failure to write is logged and never affects streaming.
 | `codec`, `hdr` | H.264, HEVC or AV1, and whether the client asked for 10-bit (HDR) |
 | `pacing_mbps`, `pacing_auto`, `fec_percent` | Packet pacing, whether it was automatic, FEC percentage |
 | `end_reason` | `disconnect` (the client closed the connection), `timeout` (no answer), `host` (stopped on the host, including a revoked view permission), `app_exit` (the app ended), `client_quit` (the client asked to quit the app); omitted when unknown |
+| `encode_budget_max_pct` | Highest per-second encode time of the session as a percentage of the frame interval (see [Encode time guard](#encode-time-guard)); omitted when no full second was measured |
+| `encode_budget_exceeded` | `true` when the encoder stayed above 65% of the frame interval for 10 seconds at any time; omitted with `encode_budget_max_pct` |
 
 A network loss can also end as `disconnect` when the control connection times out first, so
 `disconnect` does not always mean a clean exit.

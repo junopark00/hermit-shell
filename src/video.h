@@ -4,6 +4,10 @@
  */
 #pragma once
 
+// standard includes
+#include <atomic>
+#include <memory>
+
 // local includes
 #include "input.h"
 #include "platform/common.h"
@@ -49,6 +53,29 @@ namespace video {
     int encodingFramerate; // Requested display framerate
     bool input_only;
   };
+
+  /**
+   * @brief Shell: how much of the frame interval the encoder uses, kept per stream for the dashboard
+   * and the session record (docs/features.md "Encode time guard").
+   *
+   * The encoder thread evaluates each second once: the 90th percentile of that second's frame encode
+   * times as a percentage of the frame interval (1000 ms / requested fps). Seconds with fewer than 10
+   * encoded frames are skipped.
+   */
+  struct encode_budget_t {
+    std::atomic<std::uint32_t> evaluated_s {0};  ///< seconds evaluated so far (0 = nothing measured yet)
+    std::atomic<int> current_pct {0};  ///< the last evaluated second
+    std::atomic<int> max_pct {0};  ///< highest value of the session
+    std::atomic<bool> exceeded {false};  ///< over 65% for 10 s, and not yet back under 50% for 10 s
+    std::atomic<bool> ever_exceeded {false};  ///< exceeded at any time during the session
+  };
+
+  /**
+   * @brief Shell: the NVENC preset a new session with this resolution and frame rate starts with:
+   * `nvenc_preset`, lowered by the encode time guard when `nvenc_preset_guard = adjust` and an earlier
+   * session with the same geometry exceeded its budget. Never changes during a stream.
+   */
+  int nvenc_preset_for(const config_t &config);
 
   platf::mem_type_e map_base_dev_type(AVHWDeviceType type);
   platf::pix_fmt_e map_pix_fmt(AVPixelFormat fmt);
@@ -352,7 +379,8 @@ namespace video {
   void capture(
     safe::mail_t mail,
     config_t config,
-    void *channel_data
+    void *channel_data,
+    std::shared_ptr<encode_budget_t> encode_budget = nullptr  // Shell: encode time guard output (optional)
   );
 
   bool validate_encoder(encoder_t &encoder, bool expect_failure);

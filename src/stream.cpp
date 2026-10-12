@@ -436,6 +436,7 @@ namespace stream {
     std::atomic<std::uint32_t> ref_invalidations {0};  // the client lost frames and asked to recover
     std::atomic<std::int64_t> last_recovery_ms {0};  // steady clock, ms, of the last of the two
     std::atomic<std::uint64_t> reported_frames_lost {0};  // only from clients that send loss reports
+    std::shared_ptr<video::encode_budget_t> encode_budget;  // Shell: encode time vs. frame interval (written by the encoder thread)
 
     std::list<crypto::command_entry_t> do_cmds;
     std::list<crypto::command_entry_t> undo_cmds;
@@ -1975,7 +1976,7 @@ namespace stream {
     session->video.qos = platf::enable_socket_qos(ref->video_sock.native_handle(), address, session->video.peer.port(), platf::qos_data_type_e::video, session->config.videoQosType != 0);
 
     BOOST_LOG(debug) << "Start capturing Video"sv;
-    video::capture(session->mail, session->config.monitor, session);
+    video::capture(session->mail, session->config.monitor, session, session->encode_budget);
   }
 
   void audioThread(session_t *session) {
@@ -2125,6 +2126,11 @@ namespace stream {
         if (const char *reason = session.end_reason.load()) {
           entry["end_reason"] = reason;
         }
+        // Encode time guard: only once at least one second was measured
+        if (const auto &budget = session.encode_budget; budget && budget->evaluated_s.load(std::memory_order_relaxed) > 0) {
+          entry["encode_budget_max_pct"] = budget->max_pct.load(std::memory_order_relaxed);
+          entry["encode_budget_exceeded"] = budget->ever_exceeded.load(std::memory_order_relaxed);
+        }
 
         append(entry.dump(-1, ' ', false, nlohmann::ordered_json::error_handler_t::replace));
       } catch (const std::exception &e) {
@@ -2211,6 +2217,11 @@ namespace stream {
       }
       if (const auto lost = session.reported_frames_lost.load(std::memory_order_relaxed); lost > 0) {
         info["reported_frames_lost"] = lost;
+      }
+      // Encode time guard (docs/features.md): the last evaluated second, and whether the budget is exceeded
+      if (const auto &budget = session.encode_budget; budget && budget->evaluated_s.load(std::memory_order_relaxed) > 0) {
+        info["encode_budget_pct"] = budget->current_pct.load(std::memory_order_relaxed);
+        info["encode_budget_exceeded"] = budget->exceeded.load(std::memory_order_relaxed);
       }
       return info.dump(-1, ' ', false, nlohmann::ordered_json::error_handler_t::replace);
     }
@@ -2447,6 +2458,7 @@ namespace stream {
       static std::atomic<std::uint64_t> next_alloc_order {1};
       session->alloc_order = next_alloc_order.fetch_add(1, std::memory_order_relaxed);
       session->app_name = proc::proc.get_last_run_app_name();
+      session->encode_budget = std::make_shared<video::encode_budget_t>();
 
       session->do_cmds = std::move(launch_session.client_do_cmds);
       session->undo_cmds = std::move(launch_session.client_undo_cmds);

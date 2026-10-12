@@ -27,6 +27,16 @@ const config = ref(props.config)
       <div class="form-text">{{ $t('config.nvenc_preset_desc') }}</div>
     </div>
 
+    <!-- Encode time guard (Shell) -->
+    <div class="mb-3">
+      <label for="nvenc_preset_guard" class="form-label">{{ $t('config.nvenc_preset_guard') }}</label>
+      <select id="nvenc_preset_guard" class="form-select" v-model="config.nvenc_preset_guard">
+        <option value="notify">{{ $t('config.nvenc_preset_guard_notify') }}</option>
+        <option value="adjust">{{ $t('config.nvenc_preset_guard_adjust') }}</option>
+      </select>
+      <div class="form-text">{{ $t('config.nvenc_preset_guard_desc') }}</div>
+    </div>
+
     <!-- Two-pass mode -->
     <div class="mb-3">
       <label for="nvenc_twopass" class="form-label">{{ $t('config.nvenc_twopass') }}</label>

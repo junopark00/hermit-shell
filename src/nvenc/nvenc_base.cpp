@@ -212,6 +212,8 @@ namespace nvenc {
     }
 
     encoder_params.rfi = get_encoder_cap(NV_ENC_CAPS_SUPPORT_REF_PIC_INVALIDATION);
+    // Shell: read-only, for the log line below and the encode time guard's warning
+    encoder_params.engines = get_encoder_cap(NV_ENC_CAPS_NUM_ENCODER_ENGINES);
 
     init_params.presetGUID = quality_preset_guid_from_number(config.quality_preset);
     init_params.tuningInfo = NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY;
@@ -454,6 +456,9 @@ namespace nvenc {
       }
       if (config.insert_filler_data) {
         extra += " filler-data";
+      }
+      if (encoder_params.engines > 0) {
+        extra += std::format(" engines {}", encoder_params.engines);
       }
 
       BOOST_LOG(info) << "NvEnc: created encoder " << video_format_string << quality_preset_string_from_guid(init_params.presetGUID) << extra;

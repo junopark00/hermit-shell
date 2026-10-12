@@ -1085,7 +1085,11 @@ namespace platf::dxgi {
       }
 
       auto nvenc_colorspace = nvenc::nvenc_colorspace_from_shell_colorspace(colorspace);
-      if (!nvenc_d3d->create_encoder(config::video.nv, client_config, nvenc_colorspace, buffer_format)) {
+      // Shell: the encode time guard (nvenc_preset_guard = adjust) may start this session one
+      // preset faster than nvenc_preset; it is decided here, never during the stream.
+      auto nv_config = config::video.nv;
+      nv_config.quality_preset = ::video::nvenc_preset_for(client_config);
+      if (!nvenc_d3d->create_encoder(nv_config, client_config, nvenc_colorspace, buffer_format)) {
         return false;
       }
 

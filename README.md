@@ -159,6 +159,10 @@ Settings specific to Shell:
   upstream behavior and gives the lowest latency on a clean LAN.
 - **Release the virtual display when a monitor turns on** (`virtual_display_release_on_monitor`, on by
   default).
+- **Encode time guard** (`nvenc_preset_guard`): Shell measures how much of each frame's time budget
+  the encoder uses and warns (log, dashboard, session history) when a stream stays above 65% for
+  10 seconds. `notify` (default) only warns; `adjust` also starts the next stream at that resolution
+  and frame rate one NVENC preset faster. A running stream is never changed.
 
 See [docs/features.md](docs/features.md) for the details of each feature.
 

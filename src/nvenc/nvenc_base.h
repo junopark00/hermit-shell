@@ -45,6 +45,14 @@ namespace nvenc {
     bool create_encoder(const nvenc_config &config, const video::config_t &client_config, const nvenc_colorspace_t &colorspace, NV_ENC_BUFFER_FORMAT buffer_format);
 
     /**
+     * @brief Shell: number of NVENC engines on the GPU (`NV_ENC_CAPS_NUM_ENCODER_ENGINES`), read when
+     *        the encoder is created; 0 when unknown. Used by the log and the encode time guard only.
+     */
+    int encoder_engines() const {
+      return encoder_params.engines;
+    }
+
+    /**
      * @brief Destroy the encoder.
      *        Derived classes classes call it in the destructor.
      */
@@ -134,6 +142,7 @@ namespace nvenc {
       NV_ENC_BUFFER_FORMAT buffer_format = NV_ENC_BUFFER_FORMAT_UNDEFINED;
       uint32_t ref_frames_in_dpb = 0;
       bool rfi = false;
+      int engines = 0;  // Shell: NV_ENC_CAPS_NUM_ENCODER_ENGINES, 0 = unknown
     } encoder_params;
 
     std::string last_nvenc_error_string;

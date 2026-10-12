@@ -66,6 +66,18 @@ namespace config {
       return nvenc::nvenc_two_pass::quarter_resolution;
     }
 
+    // Shell: nvenc_preset_guard = notify (default) | adjust
+    nvenc_preset_guard_e preset_guard_from_view(const ::std::string_view &mode) {
+      if (mode == "notify") {
+        return nvenc_preset_guard_e::notify;
+      }
+      if (mode == "adjust") {
+        return nvenc_preset_guard_e::adjust;
+      }
+      BOOST_LOG(warning) << "config: unknown nvenc_preset_guard value: " << mode;
+      return nvenc_preset_guard_e::notify;
+    }
+
   }  // namespace nv
 
   namespace amd {
@@ -457,6 +469,7 @@ namespace config {
     true,  // nv_realtime_hags
     true,  // nv_opengl_vulkan_on_dxgi
     true,  // nv_high_power_mode
+    nvenc_preset_guard_e::notify,  // nvenc_preset_guard (Shell: warn only)
     {},  // nv_legacy
 
     {
@@ -1137,6 +1150,7 @@ namespace config {
     bool_f(vars, "nvenc_realtime_hags", video.nv_realtime_hags);
     bool_f(vars, "nvenc_opengl_vulkan_on_dxgi", video.nv_opengl_vulkan_on_dxgi);
     bool_f(vars, "nvenc_latency_over_power", video.nv_high_power_mode);
+    generic_f(vars, "nvenc_preset_guard", video.nvenc_preset_guard, nv::preset_guard_from_view);
 
 #if !defined(__ANDROID__) && !defined(__APPLE__)
     video.nv_legacy.preset = video.nv.quality_preset + 11;
