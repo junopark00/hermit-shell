@@ -26,7 +26,8 @@ dashboard and a safer installer.
   is resized (or recreated) to match. When a physical monitor is turned on, the desktop is handed back to
   it automatically.
 - **Live bitrate changes** while streaming, without restarting the stream (NVIDIA encoders).
-- **Remote shutdown and restart** from the client, with a warning when other devices are connected.
+- **Remote shutdown, restart, sleep and hibernation** from the client, with a warning when other devices are
+  connected or the PC may not be reachable again (Wake-on-LAN off).
 - **Clipboard sync**: text in both directions; images and files with Hermit.
 - **Ctrl+Alt+Del** from the client opens the Windows secure screen (sent by the Shell service).
 - **Per-device permissions** for input, clipboard, file transfer, app launch and viewing.
@@ -53,7 +54,7 @@ Shell works with any GameStream client. Some features need client support:
 | Text clipboard sync | Yes | Clients with the Apollo clipboard extension |
 | Image and file clipboard | Yes | No |
 | Live bitrate change | Yes | No (reconnect to change the bitrate) |
-| Remote shutdown and restart | Yes | No |
+| Remote shutdown, restart, sleep and hibernation | Yes | No |
 | Ctrl+Alt+Del opens the secure screen | Yes | When the client sends the key combination |
 
 Shell is **Windows only**. The Linux and macOS code inherited from upstream is still in the tree but is
@@ -225,7 +226,7 @@ and, when they are not installed, the Boost and nlohmann/json sources.
   installer adds `sudovda.cer` to the Local Machine **Trusted Root Certification Authorities** and
   **Trusted Publishers** stores so that Windows accepts the driver. `Install-Shell.ps1 -Uninstall
   -RemoveDriver` removes it again.
-- **Remote shutdown and restart** need the app launch permission of the device. Grant it only to devices
+- **Remote shutdown, restart, sleep and hibernation** need the app launch permission of the device. Grant it only to devices
   you own.
 - **Clipboard helper**: `shell.exe` runs as SYSTEM and starts `tools\shellclip.exe` as the signed-in
   user (with the user's own, never elevated, token) to read and write the clipboard on its behalf,

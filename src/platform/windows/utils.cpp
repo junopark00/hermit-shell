@@ -1,8 +1,20 @@
+// Keeps winsock.h out of windows.h: the adapter list (iphlpapi.h) needs winsock2.h
+#define WIN32_LEAN_AND_MEAN
 #include "utils.h"
 
+#include <algorithm>
+#include <cstring>
+#include <cwctype>
+#include <set>
+#include <thread>
 #include <unordered_map>
 
 #include <SetupApi.h>
+// The adapter list for the Wake-on-LAN check (iptypes.h declares IP_ADAPTER_ADDRESSES only after winsock2.h)
+#include <winsock2.h>
+#include <iphlpapi.h>
+// GetPwrCapabilities, SetSuspendState, DevicePowerEnumDevices
+#include <powrprof.h>
 
 #include "src/utility.h"
 #include "src/logging.h"
@@ -114,6 +126,189 @@ bool is_korean_ui_language() {
 	// display language is. The tray uses ANSI APIs, so Korean also needs the Korean code page.
 	static const bool korean = PRIMARYLANGID(GetSystemDefaultUILanguage()) == LANG_KOREAN && GetACP() == 949;
 	return korean;
+}
+
+power_modes_t query_power_modes() {
+	power_modes_t modes;
+	SYSTEM_POWER_CAPABILITIES caps = {};
+	if (!GetPwrCapabilities(&caps)) {
+		BOOST_LOG(warning) << "GetPwrCapabilities failed: " << GetLastError();
+		return modes;
+	}
+	// SetSuspendState(FALSE) enters the deepest of S1-S3 the PC has. A modern standby PC (S0 low-power
+	// idle, "AoAc") reports no S3 and sleeps through the same call.
+	POWER_PLATFORM_INFORMATION platform = {};
+	const bool modern_standby = CallNtPowerInformation(PlatformInformation, nullptr, 0, &platform, sizeof(platform)) == 0 && platform.AoAc;  // 0: STATUS_SUCCESS
+	modes.sleep = caps.SystemS1 || caps.SystemS2 || caps.SystemS3 || modern_standby;
+	modes.hibernate_file = caps.HiberFilePresent;
+	modes.hibernate = caps.SystemS4 && caps.HiberFilePresent;
+	return modes;
+}
+
+namespace {
+	std::wstring lowercase(std::wstring text) {
+		std::transform(text.begin(), text.end(), text.begin(), [](wchar_t c) {
+			return static_cast<wchar_t>(std::towlower(c));
+		});
+		return text;
+	}
+
+	// Reads a REG_SZ or REG_DWORD value of an open key as text; empty when absent.
+	std::wstring read_registry_text(HKEY key, const wchar_t *name) {
+		wchar_t buffer[256];
+		DWORD size = sizeof(buffer);
+		DWORD type = 0;
+		if (RegQueryValueExW(key, name, nullptr, &type, reinterpret_cast<BYTE *>(buffer), &size) != ERROR_SUCCESS) {
+			return {};
+		}
+		if (type == REG_DWORD && size >= sizeof(DWORD)) {
+			DWORD value;
+			memcpy(&value, buffer, sizeof(value));
+			return std::to_wstring(value);
+		}
+		if (type == REG_SZ || type == REG_EXPAND_SZ) {
+			buffer[std::min<DWORD>(size / sizeof(wchar_t), 255)] = L'\0';
+			return buffer;
+		}
+		return {};
+	}
+
+	// Network adapters' driver settings, by NetCfgInstanceId (the GUID GetAdaptersAddresses names
+	// an adapter by): the standardized NDIS keyword *WakeOnMagicPacket, "1" when the adapter wakes the
+	// PC on a magic packet. Adapters without the keyword (virtual ones, drivers that do not offer it)
+	// are left out.
+	std::unordered_map<std::wstring, bool> wake_on_magic_packet_settings() {
+		std::unordered_map<std::wstring, bool> settings;
+		HKEY class_key = nullptr;
+		if (RegOpenKeyExW(HKEY_LOCAL_MACHINE,
+		                  L"SYSTEM\\CurrentControlSet\\Control\\Class\\{4D36E972-E325-11CE-BFC1-08002BE10318}",
+		                  0, KEY_READ, &class_key) != ERROR_SUCCESS) {
+			return settings;
+		}
+		for (DWORD i = 0;; ++i) {
+			wchar_t sub_name[64];
+			DWORD sub_size = 64;
+			if (RegEnumKeyExW(class_key, i, sub_name, &sub_size, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS) {
+				break;
+			}
+			HKEY adapter_key = nullptr;
+			if (RegOpenKeyExW(class_key, sub_name, 0, KEY_READ, &adapter_key) != ERROR_SUCCESS) {
+				continue;
+			}
+			const auto instance = read_registry_text(adapter_key, L"NetCfgInstanceId");
+			const auto wake = read_registry_text(adapter_key, L"*WakeOnMagicPacket");
+			RegCloseKey(adapter_key);
+			if (!instance.empty() && !wake.empty()) {
+				settings[lowercase(instance)] = wake == L"1";
+			}
+		}
+		RegCloseKey(class_key);
+		return settings;
+	}
+
+	// Friendly names of the devices Windows lets wake the PC ("Allow this device to wake the
+	// computer", what `powercfg /devicequery wake_armed` lists). known is false when the list could
+	// not be read.
+	std::set<std::wstring> wake_armed_devices(bool &known) {
+		std::set<std::wstring> devices;
+		known = false;
+		if (!DevicePowerOpen(0)) {
+			return devices;
+		}
+		known = true;
+		for (ULONG i = 0;; ++i) {
+			wchar_t name[512];
+			ULONG size = sizeof(name);
+			if (!DevicePowerEnumDevices(i, 0, DEVICEPOWER_FILTER_DEVICES_PRESENT | DEVICEPOWER_FILTER_WAKEENABLED,
+			                            reinterpret_cast<PBYTE>(name), &size)) {
+				break;
+			}
+			name[511] = L'\0';
+			devices.insert(lowercase(name));
+		}
+		DevicePowerClose();
+		return devices;
+	}
+}  // namespace
+
+std::string wake_on_lan_state() {
+	// Connected adapters, with the names used to look them up
+	std::vector<BYTE> buffer(16 * 1024);
+	ULONG size = static_cast<ULONG>(buffer.size());
+	const ULONG flags = GAA_FLAG_SKIP_UNICAST | GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+	ULONG result = GetAdaptersAddresses(AF_UNSPEC, flags, nullptr, reinterpret_cast<PIP_ADAPTER_ADDRESSES>(buffer.data()), &size);
+	if (result == ERROR_BUFFER_OVERFLOW) {
+		buffer.resize(size);
+		result = GetAdaptersAddresses(AF_UNSPEC, flags, nullptr, reinterpret_cast<PIP_ADAPTER_ADDRESSES>(buffer.data()), &size);
+	}
+	if (result != NO_ERROR) {
+		BOOST_LOG(warning) << "Wake-on-LAN check: GetAdaptersAddresses failed: " << result;
+		return "unknown";
+	}
+
+	const auto settings = wake_on_magic_packet_settings();
+	bool armed_known = false;
+	const auto armed = wake_armed_devices(armed_known);
+
+	bool any_off = false;
+	bool any_unconfirmed = false;
+	for (auto adapter = reinterpret_cast<PIP_ADAPTER_ADDRESSES>(buffer.data()); adapter; adapter = adapter->Next) {
+		// Wired Ethernet with a link: a sleeping PC is woken through this one
+		if (adapter->IfType != IF_TYPE_ETHERNET_CSMACD || adapter->OperStatus != IfOperStatusUp || adapter->PhysicalAddressLength == 0) {
+			continue;
+		}
+		const auto setting = settings.find(lowercase(acpToUtf16(adapter->AdapterName)));
+		if (setting == settings.end()) {
+			continue;  // no Wake on Magic Packet setting: a virtual adapter, or a driver without it
+		}
+		if (!setting->second) {
+			any_off = true;
+			continue;
+		}
+		// The setting is on; Windows must also let the device wake the PC
+		if (armed_known && adapter->Description && armed.count(lowercase(adapter->Description))) {
+			return "yes";
+		}
+		any_unconfirmed = true;
+	}
+	if (any_unconfirmed) {
+		return "unknown";
+	}
+	return any_off ? "no" : "unknown";
+}
+
+bool enable_shutdown_privilege() {
+	HANDLE token = nullptr;
+	LUID luid;
+	bool enabled = false;
+	if (OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &token) &&
+	    LookupPrivilegeValueA(nullptr, SE_SHUTDOWN_NAME, &luid)) {
+		TOKEN_PRIVILEGES tp = {};
+		tp.PrivilegeCount = 1;
+		tp.Privileges[0].Luid = luid;
+		tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+		// AdjustTokenPrivileges succeeds even when it enabled nothing: GetLastError tells
+		enabled = AdjustTokenPrivileges(token, FALSE, &tp, sizeof(tp), nullptr, nullptr) && GetLastError() == ERROR_SUCCESS;
+	}
+	if (token) {
+		CloseHandle(token);
+	}
+	return enabled;
+}
+
+void suspend_pc_later(bool hibernate, DWORD delay_ms) {
+	std::thread([hibernate, delay_ms]() {
+		Sleep(delay_ms);
+		if (!enable_shutdown_privilege()) {
+			BOOST_LOG(warning) << "The shutdown privilege could not be enabled; trying to " << (hibernate ? "hibernate" : "sleep") << " anyway";
+		}
+		// Returns when the PC is running again (after hibernation: once it has been turned on again)
+		if (!SetSuspendState(hibernate ? TRUE : FALSE, FALSE, FALSE)) {
+			BOOST_LOG(error) << (hibernate ? "Hibernate" : "Sleep") << " failed: " << GetLastError();
+			return;
+		}
+		BOOST_LOG(info) << "The PC is awake again after " << (hibernate ? "hibernation" : "sleep");
+	}).detach();
 }
 
 // Modified from https://github.com/FrogTheFrog/Sunshine/blob/b6f8573d35eff7c55da6965dfa317dc9722bd4ef/src/platform/windows/display_device/windows_utils.cpp

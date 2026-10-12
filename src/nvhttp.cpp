@@ -2425,11 +2425,15 @@ namespace nvhttp {
   }
 
   /**
-   * @brief Shell: turn the host PC off or restart it from a client (Hermit's PC list).
-   * @details `action=query` answers whether this client may do it and which other clients are
-   * streaming right now, so the client can warn before anyone is cut off. `action=shutdown` turns
-   * the PC off, `action=restart` restarts it; `force=1` also closes apps that would hold it back
-   * (unsaved work is lost). Needs the launch permission, the same control as starting apps.
+   * @brief Shell: turn the host PC off, restart it, or put it to sleep from a client (Hermit's PC list).
+   * @details `action=query` answers whether this client may do it, which of sleep and hibernation
+   * this PC supports (`sleep=1|0`, `hibernate=1|0`), whether a wired adapter wakes it on a magic
+   * packet (`wol=yes|no|unknown`) and which other clients are streaming right now, so the client can
+   * warn before anyone is cut off or the PC becomes unreachable. `action=shutdown` turns the PC off,
+   * `action=restart` restarts it; `force=1` also closes apps that would hold it back (unsaved work
+   * is lost). `action=sleep` and `action=hibernate` suspend it (nothing is closed; `force` is
+   * ignored); hibernation is refused with 409 when it is turned off on this PC. All of them need
+   * the launch permission, the same control as starting apps.
    */
   void power(resp_https_t response, req_https_t request) {
     print_req<ShellHTTPS>(request);
@@ -2444,8 +2448,12 @@ namespace nvhttp {
       std::string body;
 #ifdef _WIN32
       body += "supported=1\n";
+      const auto modes = query_power_modes();
+      body += modes.sleep ? "sleep=1\n" : "sleep=0\n";
+      body += modes.hibernate ? "hibernate=1\n" : "hibernate=0\n";
+      body += "wol=" + wake_on_lan_state() + "\n";
 #else
-      body += "supported=0\n";
+      body += "supported=0\nsleep=0\nhibernate=0\nwol=unknown\n";
 #endif
       body += allowed ? "allowed=1\n" : "allowed=0\n";
       // Streams of other clients (this client is on its PC list, so not streaming itself)
@@ -2472,35 +2480,42 @@ namespace nvhttp {
     }
 
     const bool restart = action == "restart"sv;
-    if (action != "shutdown"sv && !restart) {
+    const bool sleep = action == "sleep"sv;
+    const bool hibernate = action == "hibernate"sv;
+    if (action != "shutdown"sv && !restart && !sleep && !hibernate) {
       response->write(SimpleWeb::StatusCode::client_error_bad_request, "unknown action"sv);
       response->close_connection_after_response = true;
       return;
     }
+    const char *what = restart ? "Restart" : sleep ? "Sleep" : hibernate ? "Hibernate" : "Shutdown";
     if (!allowed) {
-      BOOST_LOG(info) << (restart ? "Restart" : "Shutdown") << " from [" << named_cert_p->name << "] denied: no launch permission";
+      BOOST_LOG(info) << what << " from [" << named_cert_p->name << "] denied: no launch permission";
       response->write(SimpleWeb::StatusCode::client_error_unauthorized);
       response->close_connection_after_response = true;
       return;
     }
 
 #ifdef _WIN32
+    if (sleep || hibernate) {
+      // Only what this PC can do right now: hibernation needs its file (powercfg /hibernate on)
+      const auto modes = query_power_modes();
+      if (sleep ? !modes.sleep : !modes.hibernate) {
+        const char *reason = sleep ? "this PC cannot sleep" : modes.hibernate_file ? "this PC cannot hibernate" : "hibernation is turned off on this PC (no hibernation file)";
+        BOOST_LOG(warning) << what << " asked by [" << named_cert_p->name << "] refused: " << reason;
+        response->write(SimpleWeb::StatusCode::client_error_conflict, reason);
+        response->close_connection_after_response = true;
+        return;
+      }
+      BOOST_LOG(info) << (sleep ? "Putting the PC to sleep" : "Hibernating the PC") << ", asked by [" << named_cert_p->name << "]";
+      // A few seconds of grace so this answer reaches the client before the network goes down
+      suspend_pc_later(hibernate, 3000);
+      response->write("ok\n"sv);
+      return;
+    }
+
     const bool force = get_arg(args, "force", "0") == "1"sv;
     BOOST_LOG(info) << (restart ? "Restarting" : "Shutting down") << " the PC, asked by [" << named_cert_p->name << "]" << (force ? " (closing apps that hold it back)" : "");
-
-    HANDLE token = nullptr;
-    LUID luid;
-    if (OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &token) &&
-        LookupPrivilegeValue(nullptr, SE_SHUTDOWN_NAME, &luid)) {
-      TOKEN_PRIVILEGES tp = {};
-      tp.PrivilegeCount = 1;
-      tp.Privileges[0].Luid = luid;
-      tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-      AdjustTokenPrivileges(token, FALSE, &tp, sizeof(tp), nullptr, nullptr);
-    }
-    if (token) {
-      CloseHandle(token);
-    }
+    enable_shutdown_privilege();
 
     // A few seconds of grace so this answer reaches the client before the network goes down
     DWORD flags = restart ? SHUTDOWN_RESTART : SHUTDOWN_POWEROFF;

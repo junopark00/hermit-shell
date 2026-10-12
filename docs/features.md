@@ -221,18 +221,37 @@ client, its own stream only).
 - Reply: `bitrate=<encoding kbps>`. `403` when the client is not streaming, `501` for other encoders
   (the client then reconnects with the new bitrate).
 
-## Remote shutdown and restart
+## Remote shutdown, restart, sleep and hibernation
 
-In Hermit, right-click the PC in the PC list (long-press on Android) and choose to shut it down or
-restart it.
+In Hermit, right-click the PC in the PC list (long-press on Android) and choose to shut it down,
+restart it, put it to sleep or hibernate it. Sleep and hibernation are offered only when the host
+reports them as available.
 
 - `GET /actions/power?action=query` tells the client whether it may do this and which other devices are
-  streaming; Hermit names them and asks again before going ahead.
+  streaming; Hermit names them and asks again before going ahead. The reply also says what this PC
+  can do:
+  - `sleep=1|0`: S1-S3 sleep (`GetPwrCapabilities`), or modern standby (S0 low-power idle, reported
+    through `CallNtPowerInformation(PlatformInformation)`, which also sleeps through `SetSuspendState`).
+  - `hibernate=1|0`: S4 is supported and the hibernation file exists (`powercfg /hibernate on`).
+  - `wol=yes|no|unknown`: whether a connected wired Ethernet adapter wakes the PC on a magic packet.
+    Read-only: the adapter's standardized driver setting `*WakeOnMagicPacket` (its network class
+    registry key, matched by `NetCfgInstanceId`) plus whether Windows lets the device wake the PC
+    (`DevicePowerEnumDevices`, the list `powercfg /devicequery wake_armed` shows). `yes` when both
+    hold for one adapter, `no` when the setting is off on every wired adapter that has it, `unknown`
+    when nothing could be read (no wired adapter with the setting, or the wake permission could not
+    be confirmed). The clients warn before sleep or hibernation when it is not `yes`.
 - `GET /actions/power?action=shutdown[&force=1]` shuts the PC down after 5 seconds (`InitiateShutdownW`,
   full shutdown); `action=restart` restarts it. By default running apps are asked to close first, so an
   app with unsaved work can stop the shutdown; `force=1` closes those apps as well.
-- Only paired devices with the **launch apps** permission can do this. To turn the PC on again, use
-  Wake-on-LAN.
+- `GET /actions/power?action=sleep` puts the PC to sleep and `action=hibernate` hibernates it
+  (`SetSuspendState`, 3 seconds after the reply so it reaches the client). Nothing is closed; `force`
+  is ignored. Hibernation is refused with `409` and a reason when the hibernation file is absent, and
+  both are refused with `409` when the query reports them unavailable. Streams of other devices end
+  when the PC suspends; the client warns about them the same way as for a shutdown.
+- Only paired devices with the **launch apps** permission can do this; each action is logged with the
+  device's name. To turn the PC on again, use Wake-on-LAN (from sleep this needs the adapter's
+  Wake on Magic Packet setting and the "Allow this device to wake the computer" permission; from
+  hibernation and shutdown also the firmware's wake-on-LAN setting).
 
 ## Ctrl+Alt+Del
 
