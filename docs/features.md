@@ -212,11 +212,13 @@ internet paths; spreading it reduces that loss.
 
 ## Encode time guard
 
-Shell measures how long the encoder takes for each frame and compares it with the frame interval
-(1000 ms ÷ the frame rate the client asked for: 8.3 ms at 120 fps). Once a second it takes the
-90th percentile of that second's encode times (the slowest tenth, mostly key frames, does not count)
-as a percentage of the interval. Seconds with fewer than 10 encoded frames (static content,
-start-up) are not evaluated. The measurement is the wall time of the encode call on the encoder
+Shell measures how long the encoder takes for each frame and compares it with the frame interval.
+The interval is the one at which frames were really delivered during the second (the second's
+length ÷ the frames encoded in it), never shorter than the requested one (1000 ms ÷ the frame rate
+the client asked for: 8.3 ms at 120 fps): a 120 fps request that only gets 60 fps is judged against
+16.7 ms, so a 6 ms encode counts as 36%, not 72%. Once a second it takes the 90th percentile of that
+second's encode times (the slowest tenth, mostly key frames, does not count) as a percentage of the
+interval. Seconds with fewer than 10 encoded frames (static content, start-up) are not evaluated. The measurement is the wall time of the encode call on the encoder
 thread, which for NVENC includes waiting for the encoded frame; the colour conversion before it is
 not counted. The cost is two timestamps per frame and one selection over at most 1,024 samples per
 second; nothing is logged per frame.
@@ -232,8 +234,9 @@ second; nothing is logged per frame.
   omitted until the first second has been evaluated.
 - `nvenc_preset_guard` (**Settings > NVIDIA NVENC Encoder > Encode time guard**):
   - `notify` (default): only the warning above.
-  - `adjust`: in addition, the next stream at the same resolution and frame rate starts one NVENC
-    preset faster than the one that exceeded the budget (P7 → P6 → … → P1, never below P1), and the
+  - `adjust`: in addition, the next stream with the same resolution, frame rate, codec, HDR and
+    chroma format starts one NVENC preset faster than the one that exceeded the budget (P7 → P6 → …
+    → P1, never below P1), and the
     log says so (`NVENC preset guard: the next 3840x2160@120 stream starts with preset P6 (this one
     used P7, nvenc_preset is 7)`). A running stream is never changed: reconfiguring the encoder
     mid-stream risks a broken picture. The adjustment lives in memory only; a Shell restart or a

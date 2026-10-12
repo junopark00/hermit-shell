@@ -444,6 +444,11 @@ namespace video {
       return device && device->nvenc ? device->nvenc->encoder_engines() : 0;
     }
 
+    // Shell: the preset the encoder was really created with (nvenc_preset, or the guard's step-down)
+    int quality_preset() const {
+      return device && device->nvenc ? device->nvenc->quality_preset() : 0;
+    }
+
   private:
     std::unique_ptr<platf::nvenc_encode_device_t> device;
     bool force_idr = false;
@@ -477,10 +482,12 @@ namespace video {
     constexpr int min_frames_per_s = 10;  // seconds with fewer encoded frames are not evaluated
     constexpr std::size_t max_samples = 1024;  // frames per second kept (enough for 360 fps)
 
-    using geometry_t = std::tuple<int, int, int>;  // width, height, fps
+    // width, height, fps, codec, HDR, chroma: a step-down for HEVC 4K120 must not apply to an AV1 or
+    // 4:4:4 stream of the same size
+    using geometry_t = std::tuple<int, int, int, int, int, int>;
 
     geometry_t geometry(const config_t &config) {
-      return {config.width, config.height, config.framerate};
+      return {config.width, config.height, config.framerate, config.videoFormat, config.dynamicRange, config.chromaSamplingType};
     }
 
     // The preset guard's memory (nvenc_preset_guard = adjust): the NVENC preset the next session of a
@@ -559,22 +566,27 @@ namespace video {
           samples[count++] = (std::uint32_t) std::clamp<std::int64_t>(std::chrono::duration_cast<std::chrono::microseconds>(end - start).count(), 0, UINT32_MAX);
         }
         if (end - second_start >= 1s) {
-          evaluate();
+          evaluate(std::chrono::duration_cast<std::chrono::microseconds>(end - second_start).count());
           count = 0;
           second_start = end;
         }
       }
 
     private:
-      void evaluate() {
-        if (count < (std::size_t) min_frames_per_s) {
+      void evaluate(std::int64_t window_us) {
+        if (count < (std::size_t) min_frames_per_s || window_us <= 0) {
           return;  // static content or start-up: too few frames to judge
         }
+
+        // The budget is the interval at which frames were really delivered in this window (a 120 fps
+        // request that gets 60 fps leaves 16.7 ms per frame, not 8.3 ms), never shorter than the
+        // requested interval.
+        const std::int64_t interval_us = std::max<std::int64_t>(frame_interval_us, window_us / (std::int64_t) count);
 
         // 90th percentile: the slowest tenth (mostly key frames) does not count
         auto nth = samples.begin() + std::min(count * 9 / 10, count - 1);
         std::nth_element(samples.begin(), nth, samples.begin() + count);
-        const int pct = (int) std::min<std::uint64_t>((std::uint64_t) *nth * 100 / frame_interval_us, 100000);
+        const int pct = (int) std::min<std::uint64_t>((std::uint64_t) *nth * 100 / interval_us, 100000);
 
         out->current_pct.store(pct, std::memory_order_relaxed);
         if (pct > out->max_pct.load(std::memory_order_relaxed)) {
@@ -628,11 +640,12 @@ namespace video {
       int below_s = 0;
     };
 
-    // A tracker for this encoder session: the NVENC preset it really uses and the GPU's engine
-    // count (both 0 for other encoders)
+    // A tracker for this encoder session: the NVENC preset the encoder was really created with (read
+    // back from the encoder, so it is exact even with two concurrent streams of the same geometry)
+    // and the GPU's engine count (both 0 for other encoders)
     tracker_t make_tracker(std::shared_ptr<encode_budget_t> out, const encode_session_t &session, const config_t &config) {
       auto nvenc_session = dynamic_cast<const nvenc_encode_session_t *>(&session);
-      return tracker_t {std::move(out), config, nvenc_session ? preset_for(config) : 0, nvenc_session ? nvenc_session->encoder_engines() : 0};
+      return tracker_t {std::move(out), config, nvenc_session ? nvenc_session->quality_preset() : 0, nvenc_session ? nvenc_session->encoder_engines() : 0};
     }
   }  // namespace encode_budget
 

@@ -53,6 +53,13 @@ namespace nvenc {
     }
 
     /**
+     * @brief Shell: the quality preset (1 to 7) this encoder was created with; 0 before `create_encoder()`.
+     */
+    int quality_preset() const {
+      return encoder_params.quality_preset;
+    }
+
+    /**
      * @brief Destroy the encoder.
      *        Derived classes classes call it in the destructor.
      */
@@ -143,6 +150,7 @@ namespace nvenc {
       uint32_t ref_frames_in_dpb = 0;
       bool rfi = false;
       int engines = 0;  // Shell: NV_ENC_CAPS_NUM_ENCODER_ENGINES, 0 = unknown
+      int quality_preset = 0;  // Shell: the preset the encoder was created with (1 to 7)
     } encoder_params;
 
     std::string last_nvenc_error_string;

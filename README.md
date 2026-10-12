@@ -161,8 +161,9 @@ Settings specific to Shell:
   default).
 - **Encode time guard** (`nvenc_preset_guard`): Shell measures how much of each frame's time budget
   the encoder uses and warns (log, dashboard, session history) when a stream stays above 65% for
-  10 seconds. `notify` (default) only warns; `adjust` also starts the next stream at that resolution
-  and frame rate one NVENC preset faster. A running stream is never changed.
+  10 seconds. `notify` (default) only warns; `adjust` also starts the next stream with the same
+  resolution, frame rate, codec, HDR and chroma format one NVENC preset faster. A running stream is
+  never changed.
 - **Local cursor** (`local_cursor`): clients that ask for it (Hermit in remote desktop mouse mode)
   draw the mouse cursor themselves. Shell sends the pointer's shape and visibility over the control
   connection and leaves the pointer out of the video while every connected client asks, so the cursor
