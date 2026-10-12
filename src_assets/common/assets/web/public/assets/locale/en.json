@@ -611,7 +611,7 @@
     "vdisplay_release_failed": "Could not release it. It is removed when the app quits.",
     "vdisplay_release_confirm": "{n} streaming device(s) will be disconnected (the app keeps running). Release the virtual display?",
     "vdisplay_driver_ok": "Driver OK",
-    "vdisplay_driver_missing": "Driver not installed or not running. Restart Windows if Shell was just installed; otherwise reinstall Shell or run Install-Shell.ps1.",
+    "vdisplay_driver_missing": "Driver not installed or not running; streams use a monitor. Restart Windows if Shell was just installed; to add the virtual display, run Install-Shell.ps1.",
     "vdisplay_driver_incompatible": "Driver version does not match this Shell. Restart Windows if the driver was just installed; if it persists, reinstall Shell with its driver (Install-Shell.ps1 -Uninstall -RemoveDriver, then install).",
     "vdisplay_driver_watchdog": "Driver stopped responding. Restart Windows.",
     "vdisplay_driver_unknown": "Driver not checked yet",

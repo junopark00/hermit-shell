@@ -458,7 +458,11 @@ export default {
       if (state === 'ok') {
         return 'shell-status-ok';
       }
-      return state === 'unknown' ? 'shell-status-off' : 'shell-status-bad';
+      // Not installed is a choice some hosts make (streams then use a monitor): grey, not red
+      if (state === 'unknown' || state === 'missing') {
+        return 'shell-status-off';
+      }
+      return 'shell-status-bad';
     },
     clipboardHelperClass() {
       const state = this.clipboardHelper ? this.clipboardHelper.state : '';
