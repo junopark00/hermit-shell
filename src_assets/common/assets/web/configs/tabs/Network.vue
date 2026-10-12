@@ -23,7 +23,9 @@ const webhookEvent = (group) => computed({
   set: (on) => {
     const list = webhookEventList.value.filter((g) => g !== group)
     if (on) list.push(group)
-    config.value.webhook_events = webhookGroups.filter((g) => list.includes(g)).join(',')
+    const selected = webhookGroups.filter((g) => list.includes(g))
+    // An empty value is not written to shell.conf (the default would come back): `none` means no group
+    config.value.webhook_events = selected.length ? selected.join(',') : 'none'
   },
 })
 const webhookEventModels = Object.fromEntries(webhookGroups.map((g) => [g, webhookEvent(g)]))

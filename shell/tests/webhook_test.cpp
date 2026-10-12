@@ -65,6 +65,12 @@ int main() {
     check("control character refused", core::validate_url("https://hooks.example.com/a\nb", false, fake_private) == E::bad_char);
     check("empty host refused", core::validate_url("https:///hook", false, fake_private) == E::host);
     check("bad port refused", core::validate_url("https://hooks.example.com:80x/", false, fake_private) == E::host);
+    check("port 99999 refused", core::validate_url("https://hooks.example.com:99999/", false, fake_private) == E::host);
+    check("port 0 refused", core::validate_url("https://hooks.example.com:0/", false, fake_private) == E::host);
+    check("port 65535 accepted", core::validate_url("https://hooks.example.com:65535/", false, fake_private) == E::ok);
+    check("empty port after a colon refused", core::validate_url("https://hooks.example.com:/", false, fake_private) == E::host);
+    check("unbracketed IPv6 refused", core::validate_url("https://::1/x", false, fake_private) == E::host);
+    check("two colons in a host refused", core::validate_url("https://host:1:2/", false, fake_private) == E::host);
     check("bad host character refused", core::validate_url("https://hooks_example.com/", false, fake_private) == E::host);
     check("unclosed bracket refused", core::validate_url("https://[fd00::1/", false, fake_private) == E::host);
     check("error text exists", std::string(core::url_error_text(E::http_not_private)).find("http://") != std::string::npos);
@@ -80,6 +86,10 @@ int main() {
     check("unknown names reported, empty items skipped", f.groups.size() == 2 && f.unknown == std::vector<std::string> {"bogus"});
     f = core::parse_events("");
     check("empty list: no groups", f.groups.empty());
+    f = core::parse_events("none");
+    check("none: no groups, not unknown", f.groups.empty() && f.unknown.empty());
+    f = core::parse_events("none,stream");
+    check("none with a group: the group wins", f.groups == std::set<std::string> {"stream"} && f.unknown.empty());
     check("event_group", core::event_group("pairing.succeeded") == "pairing" && core::event_group("test") == "test");
     const auto only_stream = core::parse_events("stream");
     check("stream.ended allowed", core::event_allowed(only_stream, "stream.ended"));

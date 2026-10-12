@@ -134,9 +134,13 @@ namespace webhook::core {
         }
         port = after.substr(1);
       }
-    } else if (const auto colon = host_part.rfind(':'); colon != std::string_view::npos) {
+    } else if (const auto colon = host_part.find(':'); colon != std::string_view::npos) {
+      // one colon at most: an IPv6 address needs brackets
       port = host_part.substr(colon + 1);
       host_part = host_part.substr(0, colon);
+      if (port.empty() || port.find(':') != std::string_view::npos) {
+        return url_error_e::host;
+      }
     }
 
     if (host_part.empty()) {
@@ -148,10 +152,18 @@ namespace webhook::core {
       }
     }
     if (!port.empty()) {
+      if (port.size() > 5) {
+        return url_error_e::host;
+      }
+      unsigned long number = 0;
       for (unsigned char c : port) {
         if (!std::isdigit(c)) {
           return url_error_e::host;
         }
+        number = number * 10 + (c - '0');
+      }
+      if (number < 1 || number > 65535) {
+        return url_error_e::host;
       }
     }
 
@@ -179,8 +191,12 @@ namespace webhook::core {
     std::vector<std::string> unknown;  ///< names in the list that are not groups (ignored)
   };
 
+  /// `webhook_events = none`: no group on (an empty value would not be saved by the web UI).
+  constexpr std::string_view events_none = "none";
+
   /**
-   * @brief Parse `webhook_events` (comma separated, spaces and case ignored).
+   * @brief Parse `webhook_events` (comma separated, spaces and case ignored); `none` is skipped,
+   * so `none` alone turns every group off without being reported as unknown.
    */
   inline event_filter_t parse_events(std::string_view list) {
     event_filter_t filter;
@@ -191,7 +207,7 @@ namespace webhook::core {
       }
       if (known_groups.count(current)) {
         filter.groups.insert(current);
-      } else {
+      } else if (current != events_none) {
         filter.unknown.push_back(current);
       }
       current.clear();

@@ -3,9 +3,10 @@
  * @brief Shell: webhook notifications; see webhook.h and docs/features.md "Webhooks".
  *
  * One background thread takes events from a bounded queue (webhook::core::queue_capacity) and
- * POSTs each as JSON with libcurl: HTTPS with certificate verification against the system store
- * (CURLSSLOPT_NATIVE_CA on Windows), no redirects, 5 s to connect and 10 s in all, two retries
- * (2 s, 8 s) on connection errors and 5xx only. Everything other threads do is push into the queue.
+ * POSTs each as JSON with libcurl: HTTPS with certificate verification against the Windows
+ * certificate store (the linked libcurl uses Schannel), no proxy, no redirects, 5 s to connect and
+ * 10 s in all, two retries (2 s, 8 s) on connection errors and 5xx only. Everything other threads
+ * do is push into the queue.
  */
 #include <atomic>
 #include <chrono>
@@ -177,6 +178,8 @@ namespace webhook {
       curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, discard_body);
       curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, error_buffer);
       curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+      // Never a proxy, whatever http_proxy/https_proxy/all_proxy say in the environment
+      curl_easy_setopt(curl, CURLOPT_PROXY, "");
       // Redirects are never followed: a 3xx answer is a failure (see docs/features.md)
       curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
       curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 0L);
@@ -195,8 +198,11 @@ namespace webhook {
       curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
       curl_easy_setopt(curl, CURLOPT_SSLVERSION, static_cast<long>(CURL_SSLVERSION_TLSv1_2));
 #ifdef _WIN32
-      // Trust the Windows certificate store (OpenSSL build without a CA bundle of its own)
-      curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, static_cast<long>(CURLSSLOPT_NATIVE_CA));
+      // The libcurl Shell links uses Schannel, which verifies against the Windows certificate store
+      // by itself (NATIVE_CA is for an OpenSSL build and does nothing here). REVOKE_BEST_EFFORT:
+      // a revocation server that cannot be reached does not fail the delivery; a certificate known
+      // to be revoked still does.
+      curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, static_cast<long>(CURLSSLOPT_NATIVE_CA | CURLSSLOPT_REVOKE_BEST_EFFORT));
 #endif
 
       const CURLcode code = curl_easy_perform(curl);

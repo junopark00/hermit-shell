@@ -571,10 +571,10 @@ pairing, streaming or the web UI.
 | Key | Default | Meaning |
 |---|---|---|
 | `webhook_url` | empty (off) | `https://` URL that receives the events |
-| `webhook_events` | `pairing,stream,app` | Event groups to send, comma separated; unknown names are ignored with a warning. `test` is always sent |
+| `webhook_events` | `pairing,stream,app` | Event groups to send, comma separated; `none` turns every group off (the web UI writes it when no group is checked, since an empty value is not saved); unknown names are ignored with a warning. `test` is always sent |
 | `webhook_include_client_ip` | `disabled` | Add `client_ip` to pairing and stream events |
 | `webhook_allow_http_private` | `disabled` | Accept an `http://` URL whose host is a literal private, link-local or Tailscale IP address (the ranges of `net::from_address`: 10/8, 172.16/12, 192.168/16, 100.64/10, 169.254/16, fc00::/7, fe80::/64) or `localhost` |
-| secret | not set | HMAC-SHA256 key, stored in `config\credentials\webhook_secret` (not in `shell.conf`); see below |
+| secret | not set | HMAC-SHA256 key, stored as `webhook_secret` next to the key configured by `pkey` (default `config\credentials\webhook_secret`), not in `shell.conf`; see below |
 
 **URL rules.** The URL is checked when Shell starts (after **Apply**): `https://` is required, or
 `http://` under the rule above; a user name or password in the URL (`user:pw@host`), a space or a
@@ -586,19 +586,23 @@ warning and leaves webhooks off; the settings page shows the reason.
 (one warning until the queue drains). Limits per event: 5 s to connect, 10 s in all, at most 2
 retries after 2 s and 8 s, and only for connection errors (DNS, connect, timeout, reset) and HTTP
 5xx; 4xx and other errors are not retried. Redirects are never followed: a 3xx answer is a failure.
-TLS: the certificate chain and the host name are verified against the Windows certificate store
-(libcurl with `CURLSSLOPT_NATIVE_CA`), TLS 1.2 or newer, SNI set from the host name; a self-signed
-receiver needs its CA in the Local Machine Trusted Root store, or a private address over `http://`.
-A failure is logged once as a warning; the same failure is not logged again until a delivery
-succeeds. Shell never reads the response body.
+No proxy is ever used, whatever `http_proxy`, `https_proxy` or `all_proxy` say in the environment.
+TLS: the libcurl Shell links uses Schannel, so the certificate chain and the host name are verified
+by Windows against its certificate store (`CURLSSLOPT_NATIVE_CA` is also set for an OpenSSL build),
+TLS 1.2 or newer, SNI set from the host name. Revocation is checked on a best-effort basis
+(`CURLSSLOPT_REVOKE_BEST_EFFORT`): a revocation server that cannot be reached does not fail the
+delivery, a certificate known to be revoked does. A self-signed receiver needs its CA in the Local
+Machine Trusted Root store, or a private address over `http://`. A failure is logged once as a
+warning; the same failure is not logged again until a delivery succeeds. Shell never reads the
+response body.
 
 **Signature.** With a secret set, every request also carries
 `X-Shell-Timestamp: <Unix seconds>` and `X-Shell-Signature: sha256=<hex>` where `<hex>` is the
 lowercase HMAC-SHA256 of the exact request body with the secret as the key. The receiver recomputes
 it over the raw body and compares; the timestamp lets it refuse old requests. The secret is written
 through `POST /api/shell/webhook/secret` (`{"secret":"..."}`; empty removes it; signed in) into
-`config\credentials\webhook_secret`, which inherits the folder's permissions (Administrators and
-SYSTEM only). The web UI never reads it back and only shows "set" or "not set". A new secret is used
+`webhook_secret` next to the key configured by `pkey` (default `config\credentials`), where it
+inherits the folder's permissions (Administrators and SYSTEM only). The web UI never reads it back and only shows "set" or "not set". A new secret is used
 from the next event on, with no restart.
 
 **Events.** Every object starts with `event`, `time` (ISO 8601 UTC) and `host` (the host name shown

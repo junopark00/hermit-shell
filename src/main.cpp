@@ -466,6 +466,7 @@ int run_main(int argc, char *argv[]) {
 
   // FIXME: Temporary workaround: Simple-Web_server needs to be updated or replaced
   if (shutdown_event->peek()) {
+    webhook::stop();
     return lifetime::desired_exit_code;
   }
 
