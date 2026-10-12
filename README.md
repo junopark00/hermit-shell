@@ -169,6 +169,11 @@ Settings specific to Shell:
   connection and leaves the pointer out of the video while every connected client asks, so the cursor
   follows the mouse without the streaming delay. `auto` (default) offers it; `off` never does. Clients
   that do not ask see no change. Needs the Desktop Duplication capture method.
+- **Webhooks** (`webhook_url`, off by default; `webhook_events`, `webhook_include_client_ip`,
+  `webhook_allow_http_private`, and a signing secret kept in `config\credentials`): Shell POSTs a JSON
+  object for pairing, stream start and end and app start and end to one `https://` URL you set, from a
+  background thread with a bounded queue. No redirects, certificate verified, optional HMAC-SHA256
+  signature header.
 
 See [docs/features.md](docs/features.md) for the details of each feature.
 
@@ -195,7 +200,7 @@ readable by Administrators and SYSTEM only, because it holds copies of the priva
 
 ## Documentation
 
-- [Features](docs/features.md): virtual display, power control, live bitrate, clipboard, session history.
+- [Features](docs/features.md): virtual display, power control, live bitrate, clipboard, session history, webhooks.
 - [Remote access](docs/remote-access.md): Tailscale, UPnP, port forwarding, CGNAT and Wake-on-LAN.
 - [Tools](docs/tools.md): installer, diagnostics and backups, connection checks and Wake-on-LAN, stream
   statistics.
@@ -224,6 +229,9 @@ otherwise only to:
   from the LizardByte GameDB (`raw.githubusercontent.com`) and cover images from IGDB
   (`images.igdb.com`). When you pick a cover, the host downloads that image from IGDB.
 - **UPnP** (off by default): when enabled, Shell asks your router to forward its ports.
+- **Webhooks** (off by default): only a webhook you turned on sends anything out, and only to the
+  URL you set: event name, time, host name, device and app names, stream figures, and the client IP
+  only when you enable that option. See [docs/features.md](docs/features.md#webhooks).
 
 Building Shell downloads the npm packages of the web UI, the ViGEmBus installer from its GitHub release
 and, when they are not installed, the Boost and nlohmann/json sources.

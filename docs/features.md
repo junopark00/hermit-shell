@@ -12,6 +12,7 @@ behaves and which client endpoints it uses.
 | Install folder | `C:\Program Files\Shell` |
 | Settings, pairing, apps, log | `config\shell.conf`, `config\shell_state.json`, `config\apps.json`, `config\shell.log` |
 | Session history | `config\session_history.jsonl` |
+| Webhook secret | `config\credentials\webhook_secret` (only with a secret set; see [Webhooks](#webhooks)) |
 | Install backups | `C:\ProgramData\Shell\backups` |
 | Firewall rule | `Shell` (inbound, TCP and UDP, for `shell.exe`) |
 | Web UI | `https://localhost:47990` |
@@ -559,6 +560,81 @@ A network loss can also end as `disconnect` when the control connection times ou
 
 The web UI reads the history with `GET /api/shell/sessions` (signed in): `{"status":true,"sessions":[...]}`,
 newest first, at most 100 entries; lines that are not valid JSON are skipped.
+
+## Webhooks
+
+Off by default. When **Settings > Network > Webhooks** has a URL, Shell POSTs one JSON object per
+event to it. Nothing else changes: with no URL no connection is ever opened, and the code only
+queues events; one background thread sends them, so a slow or unreachable receiver never delays
+pairing, streaming or the web UI.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `webhook_url` | empty (off) | `https://` URL that receives the events |
+| `webhook_events` | `pairing,stream,app` | Event groups to send, comma separated; unknown names are ignored with a warning. `test` is always sent |
+| `webhook_include_client_ip` | `disabled` | Add `client_ip` to pairing and stream events |
+| `webhook_allow_http_private` | `disabled` | Accept an `http://` URL whose host is a literal private, link-local or Tailscale IP address (the ranges of `net::from_address`: 10/8, 172.16/12, 192.168/16, 100.64/10, 169.254/16, fc00::/7, fe80::/64) or `localhost` |
+| secret | not set | HMAC-SHA256 key, stored in `config\credentials\webhook_secret` (not in `shell.conf`); see below |
+
+**URL rules.** The URL is checked when Shell starts (after **Apply**): `https://` is required, or
+`http://` under the rule above; a user name or password in the URL (`user:pw@host`), a space or a
+control character, an empty host or a bad port are refused. A refused URL is logged once as a
+warning and leaves webhooks off; the settings page shows the reason.
+
+**Delivery.** Each event is one `POST` with `Content-Type: application/json` and
+`User-Agent: Shell/<version>`. The queue holds 64 events; when it is full the oldest is dropped
+(one warning until the queue drains). Limits per event: 5 s to connect, 10 s in all, at most 2
+retries after 2 s and 8 s, and only for connection errors (DNS, connect, timeout, reset) and HTTP
+5xx; 4xx and other errors are not retried. Redirects are never followed: a 3xx answer is a failure.
+TLS: the certificate chain and the host name are verified against the Windows certificate store
+(libcurl with `CURLSSLOPT_NATIVE_CA`), TLS 1.2 or newer, SNI set from the host name; a self-signed
+receiver needs its CA in the Local Machine Trusted Root store, or a private address over `http://`.
+A failure is logged once as a warning; the same failure is not logged again until a delivery
+succeeds. Shell never reads the response body.
+
+**Signature.** With a secret set, every request also carries
+`X-Shell-Timestamp: <Unix seconds>` and `X-Shell-Signature: sha256=<hex>` where `<hex>` is the
+lowercase HMAC-SHA256 of the exact request body with the secret as the key. The receiver recomputes
+it over the raw body and compares; the timestamp lets it refuse old requests. The secret is written
+through `POST /api/shell/webhook/secret` (`{"secret":"..."}`; empty removes it; signed in) into
+`config\credentials\webhook_secret`, which inherits the folder's permissions (Administrators and
+SYSTEM only). The web UI never reads it back and only shows "set" or "not set". A new secret is used
+from the next event on, with no restart.
+
+**Events.** Every object starts with `event`, `time` (ISO 8601 UTC) and `host` (the host name shown
+to clients), followed by the event's fields, and `client_ip` last when the option is on:
+
+| `event` | Fields | When |
+|---|---|---|
+| `pairing.succeeded` | `client` (device name) | A device finished pairing |
+| `pairing.failed` | `client`, `reason` | A pairing attempt failed: `No PIN was entered in time`, `PIN or certificate check failed` (a wrong PIN), `Too many pairing attempts; try again later`, or the protocol error that ended it. Never the PIN or any key material |
+| `stream.started` | `client`, `client_uuid`, `app`, `width`, `height`, `fps`, `bitrate_kbps`, `codec`, `hdr` | A stream is running (the first part of the session record) |
+| `stream.ended` | The whole [session record](#session-history): `started`, `ended`, `duration_s`, `client`, `client_uuid`, `app`, `width`, `height`, `fps`, `bitrate_kbps`, `codec`, `hdr`, `pacing_mbps`, `pacing_auto`, `fec_percent`, `cursor`, `end_reason`, `encode_budget_*` | A stream ended; sent with the same JSON builder as `session_history.jsonl` |
+| `app.started` | `app` | An app was launched for a client (also `Remote Input`) |
+| `app.ended` | `app` | The app was closed or ended |
+| `test` | `message` | **Send test event** on the settings page |
+
+```json
+{"event":"pairing.succeeded","time":"2026-10-12T09:50:00Z","host":"GAMING-PC","client":"Tablet"}
+{"event":"pairing.failed","time":"2026-10-12T09:51:30Z","host":"GAMING-PC","client":"Phone","reason":"No PIN was entered in time","client_ip":"192.168.1.20"}
+{"event":"stream.started","time":"2026-10-12T10:00:02Z","host":"GAMING-PC","client":"Tablet","client_uuid":"0123-ABCD","app":"Desktop","width":2560,"height":1440,"fps":120,"bitrate_kbps":50000,"codec":"HEVC","hdr":false}
+{"event":"stream.ended","time":"2026-10-12T11:11:33Z","host":"GAMING-PC","started":"2026-10-12T19:00:02","ended":"2026-10-12T20:11:33","duration_s":4291,"client":"Tablet","client_uuid":"0123-ABCD","app":"Desktop","width":2560,"height":1440,"fps":120,"bitrate_kbps":50000,"codec":"HEVC","hdr":false,"pacing_mbps":150,"pacing_auto":true,"fec_percent":20,"cursor":"host","end_reason":"disconnect"}
+{"event":"app.started","time":"2026-10-12T10:00:01Z","host":"GAMING-PC","app":"Desktop"}
+{"event":"test","time":"2026-10-12T09:49:00Z","host":"GAMING-PC","message":"Test event from the Shell web UI"}
+```
+
+`started` and `ended` inside `stream.ended` stay in host local time, like the session record;
+`time` is UTC.
+
+**What leaves the PC.** Only to the URL you set: the host name, device names, app names, the
+stream figures above and, when you turn it on, the client IP. No PIN, no certificate, no key, no
+password and no log line is ever sent. The receiver's answers are discarded.
+
+**Web UI.** `GET /api/shell/webhook` (signed in) returns `{"status":true,"enabled":...,"url_error":
+null|"...","host":"...","secret_set":...,"events":[...],"queued":n,"sent":n,"failed":n,"dropped":n,
+"last":{"event","time","ok","http_code","error","attempts"}|null}`. `POST /api/shell/webhook/test`
+queues a `test` event; its result shows up in `last` once the thread is done. The settings page
+polls for it after **Send test event**.
 
 ## Icons
 
