@@ -1560,7 +1560,7 @@ namespace nvhttp {
           if (video::probe_encoders()) {
             tree.put("root.resume", 0);
             tree.put("root.<xmlattr>.status_code", 503);
-            tree.put("root.<xmlattr>.status_message", "Failed to initialize video capture/encoding. Is a display connected and turned on?");
+            tree.put("root.<xmlattr>.status_message", proc::probe_failure_message());
 
             return;
           }
@@ -1590,8 +1590,8 @@ namespace nvhttp {
           tree.put(
             "root.<xmlattr>.status_message",
             err == 503
-            ? "Failed to initialize video capture/encoding. Is a display connected and turned on?"
-            : "Failed to start the specified application");
+            ? proc::probe_failure_message()
+            : "Failed to start the specified application"s);
           tree.put("root.gamesession", 0);
 
           return;
@@ -1707,7 +1707,7 @@ namespace nvhttp {
       if (video::probe_encoders()) {
         tree.put("root.resume", 0);
         tree.put("root.<xmlattr>.status_code", 503);
-        tree.put("root.<xmlattr>.status_message", "Failed to initialize video capture/encoding. Is a display connected and turned on?");
+        tree.put("root.<xmlattr>.status_message", proc::probe_failure_message());
 
         return;
       }

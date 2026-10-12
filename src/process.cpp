@@ -63,6 +63,27 @@ namespace proc {
   int terminate_app_id = -1;
   std::string terminate_app_id_str;
 
+  // Shell: why the last launch had no display to stream from (virtual display not created or not
+  // active, driver not usable), for the answer the client shows. Empty when nothing of that kind
+  // went wrong.
+  static std::mutex launch_failure_lock;
+  static std::string launch_failure;
+
+  static void set_launch_failure(std::string reason) {
+    std::lock_guard<std::mutex> lg(launch_failure_lock);
+    launch_failure = std::move(reason);
+  }
+
+  std::string probe_failure_message() {
+    std::string message = "Failed to initialize video capture/encoding. Is a display connected and turned on?";
+    std::lock_guard<std::mutex> lg(launch_failure_lock);
+    if (!launch_failure.empty()) {
+      message += ' ';
+      message += launch_failure;
+    }
+    return message;
+  }
+
 #ifdef _WIN32
   VDISPLAY::DRIVER_STATUS vDisplayDriverStatus = VDISPLAY::DRIVER_STATUS::UNKNOWN;
 
@@ -79,6 +100,47 @@ namespace proc {
         return;
       }
     }
+  }
+
+  /**
+   * @brief Shell: the driver state as the web UI shows it.
+   * @details `missing` is FAILED: the device could not be opened, so the driver is not installed,
+   * not started yet (a fresh install can need a restart) or was removed.
+   */
+  static const char *driver_state_name(VDISPLAY::DRIVER_STATUS status) {
+    switch (status) {
+      case VDISPLAY::DRIVER_STATUS::OK:
+        return "ok";
+      case VDISPLAY::DRIVER_STATUS::FAILED:
+        return "missing";
+      case VDISPLAY::DRIVER_STATUS::VERSION_INCOMPATIBLE:
+        return "incompatible";
+      case VDISPLAY::DRIVER_STATUS::WATCHDOG_FAILED:
+        return "watchdog";
+      case VDISPLAY::DRIVER_STATUS::UNKNOWN:
+        return "unknown";
+    }
+    return "failed";
+  }
+
+  /**
+   * @brief Shell: what a driver state that is not OK means and what to do, for the log and for the
+   * answer a client shows when the launch fails.
+   */
+  static std::string driver_state_hint(VDISPLAY::DRIVER_STATUS status) {
+    switch (status) {
+      case VDISPLAY::DRIVER_STATUS::OK:
+        return "the virtual display driver is working";
+      case VDISPLAY::DRIVER_STATUS::FAILED:
+        return "the virtual display driver is not installed or not running (restart Windows if Shell was just installed, otherwise reinstall Shell)";
+      case VDISPLAY::DRIVER_STATUS::VERSION_INCOMPATIBLE:
+        return "the virtual display driver does not match this Shell version (restart Windows if the driver was just installed, otherwise reinstall Shell with its driver)";
+      case VDISPLAY::DRIVER_STATUS::WATCHDOG_FAILED:
+        return "the virtual display driver stopped responding (restart Windows)";
+      case VDISPLAY::DRIVER_STATUS::UNKNOWN:
+        return "the virtual display driver was not checked yet";
+    }
+    return "the virtual display driver failed";
   }
 
   // Shell: handing the desktop back to the physical monitors.
@@ -250,6 +312,8 @@ namespace proc {
     }
     nlohmann::json status;
     status["driver"] = vDisplayDriverStatus == VDISPLAY::DRIVER_STATUS::OK;
+    // ok | missing | incompatible | watchdog | unknown (failed: a value this build does not know)
+    status["driver_state"] = driver_state_name(vDisplayDriverStatus);
     status["active"] = proc.virtual_display && !proc.display_name.empty();
     status["released"] = proc.vdisplay_released;
     status["name"] = proc.virtual_display ? proc.display_name : std::string {};
@@ -417,6 +481,7 @@ namespace proc {
     _app_name = app.name;
     _launch_session = launch_session;
     allow_client_commands = app.allow_client_commands;
+    set_launch_failure({});
 
     uint32_t client_width = launch_session->width ? launch_session->width : 1920;
     uint32_t client_height = launch_session->height ? launch_session->height : 1080;
@@ -475,6 +540,12 @@ namespace proc {
       if (vDisplayDriverStatus != VDISPLAY::DRIVER_STATUS::OK) {
         // Try init driver again
         initVDisplayDriver();
+        if (vDisplayDriverStatus != VDISPLAY::DRIVER_STATUS::OK) {
+          // With a monitor on, that monitor is streamed instead; without one the encoder probe
+          // below fails and the client gets this reason with the 503
+          BOOST_LOG(warning) << "Virtual Display wanted, but "sv << driver_state_hint(vDisplayDriverStatus) << "; streaming a monitor instead if one is on"sv;
+          set_launch_failure("No virtual display: " + driver_state_hint(vDisplayDriverStatus) + '.');
+        }
       }
 
       if (vDisplayDriverStatus == VDISPLAY::DRIVER_STATUS::OK) {
@@ -550,6 +621,7 @@ namespace proc {
             BOOST_LOG(info) << "Virtual Display became active after " << waited_ms << " ms";
           } else {
             BOOST_LOG(warning) << "Virtual Display was not active after " << waited_ms << " ms, continuing anyway";
+            set_launch_failure("The virtual display " + platf::to_utf8(vdisplayName) + " was not active after " + std::to_string(waited_ms) + " ms.");
           }
 
           // Don't change display settings when no params are given
@@ -577,6 +649,7 @@ namespace proc {
           config::video.output_name = display_device::map_display_name(this->display_name);
         } else {
           BOOST_LOG(warning) << "Virtual Display creation failed, or cannot get created display name in time!";
+          set_launch_failure("The virtual display could not be created (driver state: "s + driver_state_name(vDisplayDriverStatus) + ").");
         }
       } else {
         // Driver isn't working so we don't need to track virtual display.
@@ -606,6 +679,8 @@ namespace proc {
       if (config::video.ignore_encoder_probe_failure) {
         BOOST_LOG(warning) << "Encoder probe failed, but continuing due to user configuration.";
       } else {
+        // The same text goes to the client (503 status_message)
+        BOOST_LOG(error) << "Launch refused: "sv << probe_failure_message();
         return 503;
       }
     }
@@ -1031,7 +1106,14 @@ namespace proc {
     std::lock_guard<std::recursive_mutex> vdisplay_lock(vdisplay_mutex);
     // A client is about to stream: the display it gets must stay
     hold_off_vdisplay_release(30s);
-    if (!vdisplay_released || !_launch_session || vdisplay_uuid_str.empty() || vDisplayDriverStatus != VDISPLAY::DRIVER_STATUS::OK) {
+    // The probe that follows reports this launch, not an earlier one
+    set_launch_failure({});
+    if (!vdisplay_released || !_launch_session || vdisplay_uuid_str.empty()) {
+      return;
+    }
+    if (vDisplayDriverStatus != VDISPLAY::DRIVER_STATUS::OK) {
+      BOOST_LOG(warning) << "Virtual Display cannot be created again: "sv << driver_state_hint(vDisplayDriverStatus);
+      set_launch_failure("The virtual display cannot be created again: " + driver_state_hint(vDisplayDriverStatus) + '.');
       return;
     }
 
@@ -1073,12 +1155,14 @@ namespace proc {
     );
     if (name.empty()) {
       BOOST_LOG(error) << "Virtual Display could not be created again; streaming the monitors instead"sv;
+      set_launch_failure("The virtual display could not be created again (driver state: "s + driver_state_name(vDisplayDriverStatus) + ").");
       // It might exist without a name yet (see execute())
       VDISPLAY::removeVirtualDisplay(_launch_session->display_guid);
       return;
     }
     if (!display_device::wait_for_active_device(platf::to_utf8(name), 5s)) {
       BOOST_LOG(warning) << "Virtual Display was not active after 5 s, continuing anyway"sv;
+      set_launch_failure("The virtual display " + platf::to_utf8(name) + " was not active after 5000 ms.");
     }
     if (render_width && render_height) {
       VDISPLAY::changeDisplaySettings(name.c_str(), render_width, render_height, target_fps);

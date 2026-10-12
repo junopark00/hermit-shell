@@ -96,26 +96,33 @@
       </div>
     </div>
 
-    <!-- Virtual display (hosts with the virtual display driver) -->
-    <div class="shell-panel" v-if="vdisplay && vdisplay.driver">
+    <!-- Virtual display (Windows hosts; also shown while the driver is not usable) -->
+    <div class="shell-panel" v-if="vdisplay">
       <div class="shell-panel-head">
         <h3 class="mb-0">{{ $t('shell_dashboard.vdisplay') }}</h3>
       </div>
       <div class="shell-vd-row">
         <div class="shell-vd-state">
-          <div>
-            <span class="shell-status" :class="vdisplay.active ? 'shell-status-ok' : 'shell-status-off'"></span>
-            <template v-if="vdisplay.active">
-              {{ $t('shell_dashboard.vdisplay_active') }}
-              <span class="shell-num shell-helper ms-1" v-if="vdisplay.name">{{ vdisplay.name }}</span>
-            </template>
-            <template v-else-if="vdisplay.released">{{ $t('shell_dashboard.vdisplay_released') }}</template>
-            <template v-else>{{ $t('shell_dashboard.vdisplay_unused') }}</template>
+          <template v-if="vdisplay.driver">
+            <div>
+              <span class="shell-status" :class="vdisplay.active ? 'shell-status-ok' : 'shell-status-off'"></span>
+              <template v-if="vdisplay.active">
+                {{ $t('shell_dashboard.vdisplay_active') }}
+                <span class="shell-num shell-helper ms-1" v-if="vdisplay.name">{{ vdisplay.name }}</span>
+              </template>
+              <template v-else-if="vdisplay.released">{{ $t('shell_dashboard.vdisplay_released') }}</template>
+              <template v-else>{{ $t('shell_dashboard.vdisplay_unused') }}</template>
+            </div>
+            <div class="shell-helper mt-1">{{ vdisplayHelper }}</div>
+            <div class="shell-helper mt-1" v-if="vdisplayError || vdisplay.release_failed">{{ $t('shell_dashboard.vdisplay_release_failed') }}</div>
+            <div class="shell-helper mt-1">{{ $t('shell_dashboard.vdisplay_driver_ok') }}</div>
+          </template>
+          <!-- Driver not usable: what the state means and what to do -->
+          <div v-else>
+            <span class="shell-status" :class="vdisplayDriverClass"></span>{{ vdisplayDriverText }}
           </div>
-          <div class="shell-helper mt-1">{{ vdisplayHelper }}</div>
-          <div class="shell-helper mt-1" v-if="vdisplayError || vdisplay.release_failed">{{ $t('shell_dashboard.vdisplay_release_failed') }}</div>
         </div>
-        <button type="button" class="btn btn-sm btn-secondary" v-if="vdisplay.active"
+        <button type="button" class="btn btn-sm btn-secondary" v-if="vdisplay.driver && vdisplay.active"
                 :disabled="releasingVd || vdisplay.release_requested" @click="releaseVirtualDisplay">
           <i class="fas fa-display"></i>
           <span class="ms-1">{{ releasingVd || vdisplay.release_requested ? $t('shell_dashboard.vdisplay_releasing') : $t('shell_dashboard.vdisplay_release') }}</span>
@@ -428,6 +435,30 @@ export default {
       }
       parts.push(this.$t(vd.auto_release ? 'shell_dashboard.vdisplay_auto_on' : 'shell_dashboard.vdisplay_auto_off'));
       return parts.join(' \u00b7 ');
+    },
+    // "driver_state": ok | missing | incompatible | watchdog | unknown | failed (hosts before
+    // 1.1.2 send only the "driver" boolean)
+    vdisplayDriverState() {
+      const vd = this.vdisplay;
+      if (!vd) {
+        return 'unknown';
+      }
+      if (typeof vd.driver_state === 'string' && vd.driver_state) {
+        return vd.driver_state;
+      }
+      return vd.driver ? 'ok' : 'unknown';
+    },
+    vdisplayDriverText() {
+      const known = ['ok', 'missing', 'incompatible', 'watchdog', 'unknown', 'failed'];
+      const state = this.vdisplayDriverState;
+      return this.$t('shell_dashboard.vdisplay_driver_' + (known.includes(state) ? state : 'failed'));
+    },
+    vdisplayDriverClass() {
+      const state = this.vdisplayDriverState;
+      if (state === 'ok') {
+        return 'shell-status-ok';
+      }
+      return state === 'unknown' ? 'shell-status-off' : 'shell-status-bad';
     },
     clipboardHelperClass() {
       const state = this.clipboardHelper ? this.clipboardHelper.state : '';

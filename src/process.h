@@ -230,6 +230,13 @@ namespace proc {
    */
   int request_virtual_display_release();
 #endif
+  /**
+   * @brief Shell: the message for a launch refused because no display could be captured (503),
+   * with the reason the last execute() / restore_virtual_display() recorded when there is one:
+   * virtual display not created, not active in time, or the driver not usable.
+   */
+  std::string probe_failure_message();
+
   void refresh(const std::string &file_name, bool needs_terminate = true);
   void migrate_apps(nlohmann::json* fileTree_p, nlohmann::json* inputTree_p);
   std::optional<proc::proc_t> parse(const std::string &file_name);

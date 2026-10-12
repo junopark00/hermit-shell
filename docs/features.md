@@ -32,6 +32,10 @@ file that still uses the Sunshine key `sunshine_name` is read as well.
   - **Recent sessions**: the last 20 sessions from the session history (up to 100 with "Show more").
   - **Install backups** made by `Install-Shell.ps1`, newest first, each with a "Copy rollback command"
     button. The web UI does not run the rollback itself, because the service stops during a rollback.
+  - **Virtual display** (Windows hosts): whether the virtual display is in use, released or not in
+    use, how many monitors are on, the automatic release setting and the driver state. While the
+    driver is not usable the card shows only the driver state with what to do (see
+    [Driver state](#driver-state)).
 - **Bitrate** in the live table follows changes made during the stream. Hover over it to see the
   encoder target, the packet pacing and whether live changes are supported.
 - **Round-trip time** comes from the control connection (ENet pings about every 0.5 seconds). It shows
@@ -131,6 +135,34 @@ editor.
 Shell uses the SudoVDA driver to create a virtual display for a session, at the resolution and refresh
 rate the client asks for. A client can be set to always use the virtual display (per device, on the
 **Pairing** page); apps can be set to use it, and `headless_mode` uses it whenever no monitor is on.
+
+### Driver state
+
+Shell opens the SudoVDA device when it starts and checks the driver's protocol version; while the
+device is open a watchdog ping keeps running. The **Virtual display** card on the web UI home page
+shows the result, and `/api/shell/live` carries it as `vdisplay.driver_state` (`vdisplay.driver` stays
+the boolean "usable").
+
+| State | Meaning | What to do |
+|---|---|---|
+| `ok` | The device opened and the protocol version matches. | Nothing. |
+| `missing` | The device could not be opened: the driver is not installed, not started yet, or was removed (`Install-Shell.ps1 -Uninstall -RemoveDriver`). A first installation whose driver step ended with "A restart of Windows completes the driver installation" (installer exit code 3010) shows this until Windows is restarted. | Restart Windows after a fresh installation. Otherwise install Shell again: `Install-Shell.ps1` installs the driver on a first installation (an update never touches `drivers\`), or run `drivers\sudovda\install.bat` from the extracted release ZIP as administrator. |
+| `incompatible` | The device opened, but the driver's protocol version does not fit this Shell: another major version, or a driver older than the one this Shell was built with. An update keeps the installed driver, so this appears when a Shell version needs a newer driver than the one on the PC (also after a migration from Apollo, which keeps Apollo's driver). Right after a driver reinstall it can also mean the previous driver is still loaded until a restart. | Restart Windows if the driver was just installed. If it persists, install the driver of this release: `Install-Shell.ps1 -Uninstall -RemoveDriver` and install again, or run `drivers\sudovda\install.bat` from the extracted release ZIP as administrator. |
+| `watchdog` | The driver stopped answering the watchdog ping four times in a row; Shell closed the device. | Restart Windows. |
+| `unknown` | Not checked yet (only for a moment at start-up). | Wait. |
+
+Shell tries the driver again when an app that needs the virtual display is launched and when the app
+list is reloaded, so a driver that starts working later is picked up without restarting the service.
+`Invoke-ShellRecovery.ps1 -Action Diagnose` reports the device from the Windows side
+(`VirtualDisplayDriver`: present, status, problem code, driver version; see [tools.md](tools.md)).
+
+**When a launch is refused** because no display could be captured (HTTP 503), the message names the
+reason when the virtual display is involved: the driver state as above ("No virtual display: the
+virtual display driver is not installed or not running ..."), "The virtual display could not be
+created", or "The virtual display \\.\DISPLAYn was not active after N ms". Hermit shows this text in
+its launch error ("Host returned error: ... (Error 503)"); the host log has the same line
+(`Launch refused: ...`). With a monitor on, a launch that asked for the virtual display streams the
+monitor instead, as before.
 
 ### Resuming at another resolution
 
