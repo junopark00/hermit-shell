@@ -603,6 +603,8 @@ namespace config {
     {},  // prep commands
     {},  // state commands
     {},  // server commands
+    10,  // pair_rate_limit_count
+    60,  // pair_rate_limit_seconds
   };
 
   bool endline(char ch) {
@@ -1308,6 +1310,9 @@ namespace config {
     bool_f(vars, "hide_tray_controls", shell.hide_tray_controls);
     bool_f(vars, "enable_pairing", shell.enable_pairing);
     bool_f(vars, "enable_discovery", shell.enable_discovery);
+    // Shell: pairing attempts per client address; 0 turns the limit off
+    int_between_f(vars, "pair_rate_limit_count", shell.pair_rate_limit_count, {0, std::numeric_limits<int>::max()});
+    int_between_f(vars, "pair_rate_limit_seconds", shell.pair_rate_limit_seconds, {0, std::numeric_limits<int>::max()});
     bool_f(vars, "envvar_compatibility_mode", shell.envvar_compatibility_mode);
     bool_f(vars, "legacy_ordering", shell.legacy_ordering);
     bool_f(vars, "forward_rumble", input.forward_rumble);

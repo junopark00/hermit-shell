@@ -295,6 +295,11 @@ namespace config {
     std::vector<prep_cmd_t> prep_cmds;
     std::vector<prep_cmd_t> state_cmds;
     std::vector<server_cmd_t> server_cmds;
+
+    /// Shell: pairing attempts (`/pair` getservercert, `/unpair`) one client address may make per
+    /// pair_rate_limit_seconds before further ones are refused; 0 (either key) turns the limit off.
+    int pair_rate_limit_count;
+    int pair_rate_limit_seconds;
   };
 
   extern video_t video;

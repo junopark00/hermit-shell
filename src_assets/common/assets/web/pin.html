@@ -505,6 +505,11 @@
             } else if (response.reason === 'no-client') {
               this.pairStatus = 'warning';
               this.pairMessage = this.i18n.t('pin.pair_no_client');
+            } else if (response.reason === 'rate-limited') {
+              // The device's address made too many pairing attempts (pair_rate_limit_count per
+              // pair_rate_limit_seconds); its waiting attempt was ended, so it has to start again later
+              this.pairStatus = 'warning';
+              this.pairMessage = this.i18n.t('pin.pair_rate_limited');
             } else {
               this.pairStatus = 'danger';
               this.pairMessage = this.i18n.t('pin.pair_failure');

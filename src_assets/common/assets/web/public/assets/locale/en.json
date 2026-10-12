@@ -547,6 +547,7 @@
     "enable_legacy_ordering_desc": "Enable app ordering for legacy clients. Disable if this client can't handle UTF8 correctly. Needs to enable \"App ordering for legacy clients\" in the Advanced settings.",
     "pair_failure": "Pairing failed. Check the PIN and try again.",
     "pair_no_client": "No device is waiting for a PIN. Start pairing on the device first.",
+    "pair_rate_limited": "Too many pairing attempts from that device. Wait a little (a minute by default), then start pairing on the device again.",
     "pair_perm": "Permissions for this device",
     "pair_perm_all": "Full access",
     "pair_perm_all_desc": "Grants everything: all inputs, clipboard, file transfer, server commands, and listing, viewing and launching apps.",

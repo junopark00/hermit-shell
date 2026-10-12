@@ -139,6 +139,10 @@ namespace nvhttp {
     /// Shell: when the client's getservercert request arrived; the PIN goes to the newest waiting
     /// session, and one that waited longer than its client does is dropped.
     std::chrono::steady_clock::time_point created = std::chrono::steady_clock::now();
+
+    /// Shell: the address (net::addr_to_normalized_string) the getservercert request came from.
+    /// `/unpair` cancels the session from this address only, and pin() checks its rate limit.
+    std::string client_address = {};
   };
 
   /**
@@ -211,6 +215,7 @@ namespace nvhttp {
     no_client,  ///< no client is waiting for a PIN
     invalid_pin,  ///< not four digits
     failed,  ///< the waiting client's pairing request was invalid; it was told that pairing failed
+    rate_limited,  ///< Shell: the waiting client's address used up its pairing attempts; it was told that pairing failed
   };
 
   /**

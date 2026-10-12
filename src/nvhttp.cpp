@@ -162,6 +162,66 @@ namespace nvhttp {
   // (the pairing phases, fail_pair, remove_session, answer_waiting_request, drop_stale_sessions)
   // expects it held and never takes it, so nothing locks it twice.
   std::mutex map_id_sess_mutex;
+
+  // Shell: pairing attempts per client address (see pair_rate_limited); guarded by pair_rate_mutex
+  struct pair_rate_entry_t {
+    std::chrono::steady_clock::time_point window_start;
+    int count = 0;
+    bool logged = false;  ///< the refusal was logged for this window
+  };
+
+  std::unordered_map<std::string, pair_rate_entry_t> pair_rate_map;
+  std::mutex pair_rate_mutex;
+
+  /**
+   * @brief Shell: whether `address` has used up its pairing attempts (config pair_rate_limit_count
+   * per pair_rate_limit_seconds; 0 turns the limit off). The window starts with the first attempt
+   * and entries whose window ended are dropped whenever the table is touched. The unauthenticated
+   * entry points count an attempt (`/pair` getservercert and `/unpair`); the later pairing phases
+   * and pin() only check. The first refusal of an address in a window is logged.
+   * @param address The client address, as net::addr_to_normalized_string gives it.
+   * @param count Whether this request is an attempt of its own.
+   * @return true when the address is over the limit and the request must be refused.
+   */
+  bool pair_rate_limited(const std::string &address, bool count) {
+    const int limit = config::shell.pair_rate_limit_count;
+    const int seconds = config::shell.pair_rate_limit_seconds;
+    if (limit <= 0 || seconds <= 0) {
+      return false;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    const auto window = std::chrono::seconds(seconds);
+
+    std::lock_guard lock {pair_rate_mutex};
+    for (auto it = std::begin(pair_rate_map); it != std::end(pair_rate_map);) {
+      if (now - it->second.window_start >= window) {
+        it = pair_rate_map.erase(it);
+      } else {
+        ++it;
+      }
+    }
+
+    if (!count) {
+      auto it = pair_rate_map.find(address);
+      return it != std::end(pair_rate_map) && it->second.count > limit;
+    }
+
+    auto &entry = pair_rate_map.try_emplace(address, pair_rate_entry_t {now}).first->second;
+    if (++entry.count <= limit) {
+      return false;
+    }
+    if (!entry.logged) {
+      entry.logged = true;
+      BOOST_LOG(warning) << "Pairing attempts from [" << address << "] refused for " << seconds
+                         << " seconds: more than " << limit << " attempts";
+    }
+    return true;
+  }
+
+  /// Shell: the reply a client over its pairing limit gets, the same shape as a failed pairing
+  constexpr auto pair_rate_limited_message = "Too many pairing attempts; try again later"sv;
+
   client_t client_root;
   std::atomic<uint32_t> session_id_counter;
 
@@ -813,10 +873,22 @@ namespace nvhttp {
     }
 
     auto uniqID {get_arg(args, "uniqueid")};
+    // Shell: the socket's address (no reverse proxy is supported), for the pairing rate limit and
+    // the /unpair check
+    auto client_address = net::addr_to_normalized_string(request->remote_endpoint().address());
 
     args_t::const_iterator it;
     if (it = args.find("phrase"); it != std::end(args)) {
       if (it->second == "getservercert"sv) {
+        // Shell: an attempt of its own; refused like a failed pairing, so the client shows its
+        // usual failure, and no session is kept
+        if (pair_rate_limited(client_address, true)) {
+          tree.put("root.paired", 0);
+          tree.put("root.<xmlattr>.status_code", 400);
+          tree.put("root.<xmlattr>.status_message", std::string {pair_rate_limited_message});
+          return;
+        }
+
         pair_session_t sess;
 
         auto deviceName { get_arg(args, "devicename") };
@@ -829,6 +901,7 @@ namespace nvhttp {
         sess.client.name = std::move(deviceName);
         sess.client.cert = util::from_hex_vec(get_arg(args, "clientcert"), true);
         sess.async_insert_pin.salt = get_arg(args, "salt");
+        sess.client_address = std::move(client_address);
 
         BOOST_LOG(debug) << sess.client.cert;
 
@@ -883,6 +956,12 @@ namespace nvhttp {
     }
 
     if (it = args.find("clientchallenge"); it != std::end(args)) {
+      // Shell: continues the attempt counted at getservercert; an address that went over the
+      // limit since then gets no further
+      if (pair_rate_limited(client_address, false)) {
+        fail_pair(sess_it->second, tree, std::string {pair_rate_limited_message});
+        return;
+      }
       auto challenge = util::from_hex_vec(it->second, true);
       clientchallenge(sess_it->second, tree, challenge);
     } else if (it = args.find("serverchallengeresp"); it != std::end(args)) {
@@ -910,6 +989,9 @@ namespace nvhttp {
    * of that uniqueid (answering a request it keeps waiting for the PIN) and then replies 200, which
    * lets the client report the wrong PIN. Paired devices are removed in the web UI only, so without
    * an unfinished pairing the reply is 400, and the client does not take the device for unpaired.
+   * Only the address that started the pairing may cancel it; from any other address the reply is
+   * the 400 of "nothing pending", which does not tell whether an attempt exists. Each request
+   * counts as a pairing attempt of its address (pair_rate_limited).
    */
   void unpair(resp_http_t response, req_http_t request) {
     print_req<SimpleWeb::HTTP>(request);
@@ -932,16 +1014,34 @@ namespace nvhttp {
       return;
     }
 
-    bool dropped;
+    auto client_address = net::addr_to_normalized_string(request->remote_endpoint().address());
+    if (pair_rate_limited(client_address, true)) {
+      tree.put("root.<xmlattr>.status_code", 400);
+      tree.put("root.<xmlattr>.status_message", std::string {pair_rate_limited_message});
+      return;
+    }
+
+    bool dropped = false;
+    bool other_address = false;
     {
       std::lock_guard lock {map_id_sess_mutex};
-      dropped = erase_session(it->second, "Pairing was cancelled");
+      auto sess_it = map_id_sess.find(it->second);
+      if (sess_it != std::end(map_id_sess)) {
+        if (sess_it->second.client_address == client_address) {
+          dropped = erase_session(it->second, "Pairing was cancelled");
+        } else {
+          other_address = true;
+        }
+      }
     }
 
     if (dropped) {
       BOOST_LOG(info) << "Unfinished pairing dropped at the client's request"sv;
       tree.put("root.<xmlattr>.status_code", 200);
     } else {
+      if (other_address) {
+        BOOST_LOG(info) << "Unpair request from [" << client_address << "] ignored: the unfinished pairing of that uniqueid was started from another address"sv;
+      }
       tree.put("root.<xmlattr>.status_code", 400);
       tree.put("root.<xmlattr>.status_message", "Unpair this device in the host's web UI");
     }
@@ -994,6 +1094,16 @@ namespace nvhttp {
       return pin_result_e::no_client;
     }
     auto &sess = sess_it->second;
+
+    // Shell: the device's address went over its pairing limit while it waited (its later attempts
+    // were refused, this one was not); it is answered like a failed pairing, and the page says why
+    if (pair_rate_limited(sess.client_address, false)) {
+      BOOST_LOG(warning) << "PIN not handed to [" << sess.client.name << "]: its address is over the pairing limit";
+      // a copy: the key would otherwise live in the session being erased
+      const auto unique_id = sess.client.uniqueID;
+      erase_session(unique_id, std::string {pair_rate_limited_message});
+      return pin_result_e::rate_limited;
+    }
 
     if (!name.empty()) {
       sess.client.name = name;

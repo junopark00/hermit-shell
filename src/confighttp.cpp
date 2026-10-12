@@ -1505,8 +1505,9 @@ namespace confighttp {
    * Shell: the reply is `{"status": <bool>, "reason": "<reason>"}`. `status` is true only for the
    * reason `sent`: the PIN reached the waiting device, which checks it and finishes (or, for a
    * wrong PIN, ends) the pairing itself. The other reasons are `no-client` (no device is waiting
-   * for a PIN), `invalid-pin` (not four digits) and `failed` (the waiting device's request was
-   * invalid).
+   * for a PIN), `invalid-pin` (not four digits), `failed` (the waiting device's request was
+   * invalid) and `rate-limited` (the waiting device's address is over the pairing limit,
+   * `pair_rate_limit_count` per `pair_rate_limit_seconds`; it was told that pairing failed).
    *
    * @api_examples{/api/pin| POST| {"pin":"1234","name":"My PC","perm":119480064}}
    */
@@ -1543,6 +1544,9 @@ namespace confighttp {
           break;
         case nvhttp::pin_result_e::failed:
           output_tree["reason"] = "failed";
+          break;
+        case nvhttp::pin_result_e::rate_limited:
+          output_tree["reason"] = "rate-limited";
           break;
       }
       send_response(response, output_tree);
