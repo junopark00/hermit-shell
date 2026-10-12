@@ -171,8 +171,12 @@ Requires PowerShell 7.4 or later.
 ```
 
 The report lists the Windows version, GPUs and drivers, network adapters and link speeds, the Shell
-version and service state, which configuration files exist, and the state of the Tailscale service if
-present. It does not record public IP addresses, host names, MAC addresses, settings or certificates.
+version and service state, the SudoVDA virtual display device (`VirtualDisplayDriver`: present, Plug
+and Play status, Device Manager problem code, driver version and date; `Status: NotFound` when the
+device does not exist), which configuration files exist, and the state of the Tailscale service if
+present. A device that is missing or not `OK` is listed under `Issues`; see
+[Driver state](features.md#driver-state) for what to do. It does not record public IP addresses, host
+names, MAC addresses, settings or certificates.
 
 **Full backup** (settings, app list, pairing state, certificates and the cover images in
 `config\covers`; may need an elevated PowerShell):

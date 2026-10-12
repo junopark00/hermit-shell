@@ -68,6 +68,37 @@ function Get-ShellDiagnostic {
     $presence = foreach ($name in $files) {
         [pscustomobject]@{ File = $name; Present = (Test-Path -LiteralPath (Join-Path $config $name) -PathType Leaf) }
     }
+    # The SudoVDA virtual display device that Install-Shell.ps1 installs. It is root-enumerated
+    # (instance id ROOT\DISPLAY\000x), so it is found by its hardware id; the driver version is in
+    # its class key. Status is the Plug and Play state (OK, Error, Degraded, Unknown); ProblemCode
+    # is the Device Manager code (0 none, 28 no driver, 10 cannot start).
+    $vda = [ordered]@{ Present = $false; Status = 'NotFound'; ProblemCode = $null; DriverVersion = $null; DriverDate = $null }
+    try {
+        $device = Get-CimInstance Win32_PnPEntity -ErrorAction Stop |
+            Where-Object { $_.HardwareID -and ($_.HardwareID -contains 'root\sudomaker\sudovda') } |
+            Select-Object -First 1
+        if ($device) {
+            $vda.Present = [bool]$device.Present
+            $vda.Status = [string]$device.Status
+            $vda.ProblemCode = [int]$device.ConfigManagerErrorCode
+            $enum = Get-ItemProperty -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Enum\$($device.PNPDeviceID)" -ErrorAction SilentlyContinue
+            $driverKey = if ($enum) { $enum.PSObject.Properties['Driver'] } else { $null }
+            if ($driverKey -and $driverKey.Value) {
+                $class = Get-ItemProperty -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Control\Class\$($driverKey.Value)" -ErrorAction SilentlyContinue
+                if ($class) {
+                    foreach ($name in 'DriverVersion', 'DriverDate') {
+                        $property = $class.PSObject.Properties[$name]
+                        if ($property) { $vda[$name] = [string]$property.Value }
+                    }
+                }
+            }
+            if (-not $vda.Present -or $vda.Status -ne 'OK') {
+                $issues.Add("Virtual display driver (SudoVDA) is not working: status $($vda.Status), problem code $($vda.ProblemCode).")
+            }
+        } else {
+            $issues.Add('Virtual display driver (SudoVDA) was not found; the virtual display is not available.')
+        }
+    } catch { $issues.Add('Virtual display driver state unavailable.') }
     # Tailscale is a common way to reach a streaming host from outside the local network
     $tailscaleService = Get-Service Tailscale -ErrorAction SilentlyContinue
     [pscustomobject]@{
@@ -75,6 +106,7 @@ function Get-ShellDiagnostic {
         OS = $os; GPU = $gpu; Network = $network
         ShellVersion = $version
         ShellService = $(if ($service) { [string]$service.Status } else { 'NotFound' })
+        VirtualDisplayDriver = [pscustomobject]$vda
         ConfigFiles = @($presence)
         TailscaleService = $(if ($tailscaleService) { [string]$tailscaleService.Status } else { 'NotFound' })
         Issues = @($issues.ToArray())
