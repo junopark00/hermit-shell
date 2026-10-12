@@ -64,3 +64,6 @@ venv/
 # Prebuilt third-party driver files shipped with Shell (see the README.txt next to them)
 !/src_assets/windows/drivers/sudovda/SudoVDA.dll
 !/src_assets/windows/drivers/sudovda/nefconc.exe
+
+# oh-my-claudecode session state
+.omc/
