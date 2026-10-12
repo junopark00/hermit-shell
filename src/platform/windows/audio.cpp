@@ -6,6 +6,7 @@
 
 // standard includes
 #include <format>
+#include <mutex>
 
 // platform includes
 #include <Audioclient.h>
@@ -761,6 +762,35 @@ namespace platf::audio {
       return std::nullopt;
     }
 
+    /**
+     * @brief Read the sink Shell last assigned as the default, under the lock.
+     * @return A copy of the assigned sink name; empty if Shell has not changed the default.
+     */
+    std::string assigned_sink_snapshot() {
+      std::lock_guard<std::mutex> lg(assigned_sink_mutex);
+      return assigned_sink;
+    }
+
+    /**
+     * @brief Put the assigned virtual sink back as the default after another application changed it.
+     *
+     * Called from each session's capture thread when the default render device changes, so the
+     * target is read at that moment (not fixed when the capture was created) and the actual
+     * switch is serialised by set_sink().
+     */
+    void restore_assigned_virtual_sink() {
+      auto sink = assigned_sink_snapshot();
+      if (!extract_virtual_sink_info(sink)) {
+        // Not a virtual sink (or nothing assigned yet): leave the user's choice alone.
+        return;
+      }
+
+      BOOST_LOG(info) << "Resetting sink to ["sv << sink << "] after default changed";
+      if (set_sink(sink)) {
+        BOOST_LOG(warning) << "Couldn't restore virtual audio sink ["sv << sink << "] after default changed";
+      }
+    }
+
     std::unique_ptr<mic_t> microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size) override {
       auto mic = std::make_unique<mic_wasapi_t>();
 
@@ -769,14 +799,13 @@ namespace platf::audio {
       }
 
       if (config::audio.keep_default) {
-        // If this is a virtual sink, set a callback that will change the sink back if it's changed
-        auto virtual_sink_info = extract_virtual_sink_info(assigned_sink);
-        if (virtual_sink_info) {
-          mic->default_endpt_changed_cb = [this] {
-            BOOST_LOG(info) << "Resetting sink to ["sv << assigned_sink << "] after default changed";
-            set_sink(assigned_sink);
-          };
-        }
+        // If the assigned sink is a virtual sink, change it back when another application
+        // replaces the default. The sink is checked when the change happens rather than here:
+        // a second client whose capture starts before the first client finished set_sink()
+        // would otherwise never register the restore and lose it once the first client leaves.
+        mic->default_endpt_changed_cb = [this] {
+          restore_assigned_virtual_sink();
+        };
       }
 
       return mic;
@@ -851,6 +880,11 @@ namespace platf::audio {
     }
 
     int set_sink(const std::string &sink) override {
+      // Serialise format changes, default-endpoint writes and the assigned_sink update:
+      // several sessions' capture threads may restore the sink at the same time, and the
+      // last session may be restoring the host sink while another one starts.
+      std::lock_guard<std::mutex> lg(assigned_sink_mutex);
+
       auto device_id = set_format(sink);
       if (!device_id) {
         return -1;
@@ -1149,6 +1183,7 @@ namespace platf::audio {
     policy_t policy;
     audio::device_enum_t device_enum;
     std::string assigned_sink;
+    std::mutex assigned_sink_mutex;  ///< Guards assigned_sink and serialises set_sink().
   };
 }  // namespace platf::audio
 
