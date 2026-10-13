@@ -451,6 +451,8 @@ namespace stream {
     std::atomic<int> fec_percentage_override {0};  // 0 = none: the configured fec_percentage applies
     std::atomic<int> fec_percent_max {0};  // highest override of the session, for the session record
     std::atomic<std::int64_t> fec_log_ms {0};  // steady clock, ms, of the last "FEC for [...]" log line
+    std::atomic<int> fec_percent_logged {0};  // effective value of that line (0 = none yet: the configured one)
+    std::atomic<bool> fec_log_pending {false};  // a change waits for the log window to open (the video thread flushes it)
 
     // Shell: local cursor (docs/features.md "Local cursor"). The atomics are written by the HTTPS
     // thread (/actions/cursor); everything else belongs to the control thread, which relays the
@@ -1656,6 +1658,9 @@ namespace stream {
 
       // Shell: the client's live override when set, else the configured percentage (live_fec.h)
       auto fecPercentage = live_fec::effective_percent(session->fec_percentage_override.load(std::memory_order_relaxed), config::stream.fec_percentage);
+      if (session->fec_log_pending.load(std::memory_order_relaxed)) {
+        session::log_fec_change(*session);
+      }
 
       // Insert space for packet headers
       auto blocksize = session->config.packetsize + MAX_RTP_HEADER_SIZE;
@@ -2412,27 +2417,43 @@ namespace stream {
       return encoder_kbps;
     }
 
+    void log_fec_change(session_t &session) {
+      // One log line per 500 ms per session (the client acts at most every 500 ms): a change inside
+      // the window is noted as pending and logged, with the latest value, when the window opens,
+      // from the next request or from the video thread. The value itself is applied every time.
+      const int configured = config::stream.fec_percentage;
+      const int now_percent = live_fec::effective_percent(session.fec_percentage_override.load(std::memory_order_relaxed), configured);
+      const int logged = live_fec::effective_percent(session.fec_percent_logged.load(std::memory_order_relaxed), configured);
+      if (now_percent == logged) {
+        session.fec_log_pending.store(false, std::memory_order_relaxed);
+        return;
+      }
+      const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+      auto last_ms = session.fec_log_ms.load(std::memory_order_relaxed);
+      if (now_ms - last_ms < 500) {
+        session.fec_log_pending.store(true, std::memory_order_relaxed);
+        return;
+      }
+      // The HTTPS and the video thread may both get here; the one that claims the window logs.
+      if (!session.fec_log_ms.compare_exchange_strong(last_ms, now_ms, std::memory_order_relaxed)) {
+        return;
+      }
+      session.fec_percent_logged.store(now_percent, std::memory_order_relaxed);
+      session.fec_log_pending.store(false, std::memory_order_relaxed);
+      BOOST_LOG(info) << "FEC for ["sv << session.device_name << "] changed to "sv << now_percent << "% (was "sv << logged << "%)"sv;
+    }
+
     int set_fec_percentage(session_t &session, int percent) {
       const int configured = config::stream.fec_percentage;
       const int override_percent = std::clamp(percent, 0, live_fec::max_percent);
-      const int was = live_fec::effective_percent(session.fec_percentage_override.exchange(override_percent, std::memory_order_relaxed), configured);
-      const int now_percent = live_fec::effective_percent(override_percent, configured);
+      session.fec_percentage_override.store(override_percent, std::memory_order_relaxed);
       if (override_percent > 0) {
         int max_seen = session.fec_percent_max.load(std::memory_order_relaxed);
         while (max_seen < override_percent && !session.fec_percent_max.compare_exchange_weak(max_seen, override_percent, std::memory_order_relaxed)) {
         }
       }
-      if (now_percent == was) {
-        return now_percent;
-      }
-      // One log line per second per session: a client that steps the percentage up quickly
-      // would otherwise fill the log. The value itself is applied every time.
-      const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-      if (now_ms - session.fec_log_ms.load(std::memory_order_relaxed) >= 1000) {
-        session.fec_log_ms.store(now_ms, std::memory_order_relaxed);
-        BOOST_LOG(info) << "FEC for ["sv << session.device_name << "] changed to "sv << now_percent << "% (was "sv << was << "%)"sv;
-      }
-      return now_percent;
+      log_fec_change(session);
+      return live_fec::effective_percent(override_percent, configured);
     }
 
     std::string live_info_json(const session_t &session) {

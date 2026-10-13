@@ -380,7 +380,8 @@ Without a request nothing changes: every frame uses `fec_percentage` from the se
   rebuild the lost packets instead. Loss with a rising round-trip time is congestion and still calls
   for a lower bitrate.
 - The log notes a change (`FEC for [Tablet] changed to 50% (was 20%)`), at most one line per
-  second per session; a request that leaves the percentage unchanged is not logged. `GET
+  500 ms per session; a change inside that window is logged, with the latest value, when the window
+  opens. A request that leaves the percentage unchanged is not logged. `GET
   /api/shell/live` session entries carry `fec_percent` (the percentage the next frame uses). The
   [session record](#session-history) keeps `fec_percent` (the configured value) and adds
   `fec_percent_max`, the highest percentage the session used.

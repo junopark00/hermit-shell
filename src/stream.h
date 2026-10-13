@@ -100,6 +100,13 @@ namespace stream {
     int set_fec_percentage(session_t &session, int percent);
 
     /**
+     * @brief Shell: log a live FEC change, at most one line per 500 ms per session; a change inside
+     *        the window is logged when it opens. Called by set_fec_percentage and, while a change is
+     *        pending, by the video thread before a frame.
+     */
+    void log_fec_change(session_t &session);
+
+    /**
      * @brief Shell: live figures of a session for the web dashboard, as a JSON object.
      */
     std::string live_info_json(const session_t &session);
