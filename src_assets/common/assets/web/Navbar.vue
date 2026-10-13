@@ -45,9 +45,6 @@ import ThemeToggle from './ThemeToggle.vue'
 
 export default {
   components: { ThemeToggle },
-  created() {
-    console.log("Header mounted!")
-  },
   mounted() {
     // Links are relative ("./config"), so compare resolved paths rather than the href text.
     const trim = p => p.replace(/\/$/, '') || '/';
