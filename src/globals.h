@@ -56,6 +56,7 @@ namespace mail {
   MAIL(gamepad_feedback);
   MAIL(hdr);
   MAIL(bitrate);  ///< Shell: new video encoding bitrate (kbps) for a running stream
+  MAIL(fps);  ///< Shell: new video frame rate for a running stream (live_fps.h)
 #undef MAIL
 
 }  // namespace mail

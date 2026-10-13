@@ -91,6 +91,16 @@ namespace nvenc {
      */
     bool set_bitrate(int kbps);
 
+    /**
+     * @brief Shell: change the frame rate the rate control assumes (nvEncReconfigureEncoder, no
+     *        reset and no forced IDR frame), for live frame rate changes from the client. The VBV
+     *        buffer is resized to one frame at the new rate, so each frame at a lower rate may use
+     *        more bits at the same average bitrate; set_bitrate() keeps using this rate.
+     * @param fps New frame rate.
+     * @return `true` on success, `false` on error (the old frame rate stays in effect).
+     */
+    bool set_framerate(int fps);
+
   protected:
     /**
      * @brief Required. Used for loading NvEnc library and setting `nvenc` variable with `NvEncodeAPICreateInstance()`.
@@ -165,7 +175,7 @@ namespace nvenc {
                                          ///< Can be set in constructor or `init_library()`, must override `wait_for_async_event()`.
 
   private:
-    // Shell: what the encoder was initialized with, for set_bitrate()
+    // Shell: what the encoder was initialized with, for set_bitrate() and set_framerate()
     NV_ENC_INITIALIZE_PARAMS saved_init_params = {};
     NV_ENC_CONFIG saved_enc_config = {};
     uint32_t saved_framerate = 0;

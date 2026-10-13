@@ -705,6 +705,39 @@ namespace nvenc {
     return true;
   }
 
+  bool nvenc_base::set_framerate(int fps) {
+    if (!encoder || fps <= 0) {
+      return false;
+    }
+
+    // Same rate control as create_encoder(), with the VBV buffer sized for one frame at the new rate
+    NV_ENC_INITIALIZE_PARAMS init_params = saved_init_params;
+    init_params.frameRateNum = (uint32_t) fps;
+    init_params.frameRateDen = 1;
+    NV_ENC_CONFIG enc_config = saved_enc_config;
+    if (saved_custom_vbv) {
+      enc_config.rcParams.vbvBufferSize = enc_config.rcParams.averageBitRate / (uint32_t) fps;
+      if (saved_vbv_percentage_increase > 0) {
+        enc_config.rcParams.vbvBufferSize += enc_config.rcParams.vbvBufferSize * saved_vbv_percentage_increase / 100;
+      }
+    }
+
+    NV_ENC_RECONFIGURE_PARAMS reconfigure_params = {min_struct_version(NV_ENC_RECONFIGURE_PARAMS_VER)};
+    reconfigure_params.reInitEncodeParams = init_params;
+    reconfigure_params.reInitEncodeParams.encodeConfig = &enc_config;
+    reconfigure_params.resetEncoder = 0;
+    reconfigure_params.forceIDR = 0;
+    if (nvenc_failed(nvenc->nvEncReconfigureEncoder(encoder, &reconfigure_params))) {
+      BOOST_LOG(error) << "NvEnc: NvEncReconfigureEncoder() failed: " << last_nvenc_error_string;
+      return false;
+    }
+
+    saved_init_params = init_params;
+    saved_enc_config = enc_config;
+    saved_framerate = (uint32_t) fps;
+    return true;
+  }
+
   uint32_t nvenc_base::min_struct_version(uint32_t version, uint32_t v11_struct_version, uint32_t v12_struct_version) {
     assert(minimum_api_version);
 

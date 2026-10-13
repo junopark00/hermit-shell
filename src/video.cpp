@@ -30,6 +30,7 @@ extern "C" {
 #include "display_device.h"
 #include "globals.h"
 #include "input.h"
+#include "live_fps.h"
 #include "logging.h"
 #include "nvenc/nvenc_base.h"
 #include "platform/common.h"
@@ -417,6 +418,10 @@ namespace video {
 
     bool set_bitrate(int kbps) override {
       return device && device->nvenc && device->nvenc->set_bitrate(kbps);
+    }
+
+    bool set_framerate(int fps) override {
+      return device && device->nvenc && device->nvenc->set_framerate(fps);
     }
 
     void invalidate_ref_frames(int64_t first_frame, int64_t last_frame) override {
@@ -1277,6 +1282,13 @@ namespace video {
     return false;
 #endif
   }
+
+  bool live_fps_supported() {
+    // Same encoders as live bitrate: only NVENC resizes its rate control for the lower rate
+    // (nvenc_base::set_framerate). Elsewhere each remaining frame would keep the budget of a frame
+    // at the stream's rate, and the stream would only lose bitrate.
+    return live_bitrate_supported();
+  }
   int active_hevc_mode;
   int active_av1_mode;
   bool last_encoder_probe_supported_ref_frames_invalidation = false;
@@ -2130,6 +2142,7 @@ namespace video {
     safe::mail_t mail,
     img_event_t images,
     config_t &config,  // Shell: by reference, so a live bitrate change survives encoder reinit
+    int &live_fps,  // Shell: live frame rate (0 = the stream's), kept across encoder reinit
     std::shared_ptr<platf::display_t> disp,
     std::unique_ptr<platf::encode_device_t> encode_device,
     safe::signal_t &reinit_event,
@@ -2176,6 +2189,27 @@ namespace video {
     auto idr_events = mail->event<bool>(mail::idr);
     auto invalidate_ref_frames_events = mail->event<std::pair<int64_t, int64_t>>(mail::invalidate_ref_frames);
     auto bitrate_events = mail->event<int>(mail::bitrate);
+    auto fps_events = mail->event<int>(mail::fps);
+
+    // Shell: live frame rate (/actions/fps). Below the stream's rate, captured frames are dropped
+    // before conversion so that one is encoded per interval (live_fps.h); the newest dropped image
+    // waits in held_img and is encoded at its deadline when no newer image comes, so the picture
+    // never stays behind the screen.
+    std::int64_t decimate_interval_us = 0;  // 0 = every frame is encoded
+    std::int64_t decimate_next_us = 0;  // steady clock, us: when the next frame is due (0 = now)
+    std::shared_ptr<platf::img_t> held_img;
+    const auto max_frametime_us = std::chrono::duration_cast<std::chrono::microseconds>(max_frametime).count();
+    auto apply_fps = [&](int fps) {
+      if (!session->set_framerate(fps)) {
+        BOOST_LOG(warning) << "The encoder could not change the frame rate during the stream"sv;
+      }
+      decimate_interval_us = fps > 0 && fps < config.framerate ? 1000000 / fps : 0;
+      decimate_next_us = 0;
+    };
+    if (live_fps > 0 && live_fps < config.framerate) {
+      // A new encoder instance (reinit) starts at the stream's rate: restore the client's
+      apply_fps(live_fps);
+    }
 
     {
       // Load a dummy image into the AVFrame to ensure we have something to encode
@@ -2235,6 +2269,15 @@ namespace video {
         }
       }
 
+      // Shell: live frame rate change requested by the client (/actions/fps)
+      while (fps_events->peek()) {
+        if (auto fps = fps_events->pop(0ms)) {
+          apply_fps(*fps);
+          live_fps = *fps < config.framerate ? *fps : 0;
+          BOOST_LOG(info) << "Video frame rate changed to ["sv << *fps << " fps]"sv;
+        }
+      }
+
       while (invalidate_ref_frames_events->peek()) {
         if (auto frames = invalidate_ref_frames_events->pop(0ms)) {
           session->invalidate_ref_frames(frames->first, frames->second);
@@ -2253,8 +2296,24 @@ namespace video {
       std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
 
       // Encode at a minimum FPS to avoid image quality issues with static content
-      if (!requested_idr_frame || images->peek()) {
-        if (auto img = images->pop(max_frametime)) {
+      if (!requested_idr_frame || images->peek() || held_img) {
+        std::shared_ptr<platf::img_t> img;
+        bool held = false;
+        if (held_img) {
+          // Shell: a newer image replaces the held one; without one by its deadline (at once for a
+          // key frame or when the rate went back up), the held image is encoded
+          const auto now_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+          const auto wait_us = requested_idr_frame || decimate_interval_us == 0 ? 0 : std::clamp<std::int64_t>(decimate_next_us - now_us, 0, max_frametime_us);
+          img = images->pop(std::chrono::microseconds(wait_us));
+          if (!img) {
+            img = std::move(held_img);
+            held = true;
+          }
+          held_img.reset();
+        } else {
+          img = images->pop(max_frametime);
+        }
+        if (img) {
           frame_timestamp = img->frame_timestamp;
           if (!frame_timestamp) {
             if (!missing_frame_timestamp_warning_logged) {
@@ -2270,6 +2329,16 @@ namespace video {
           // If new frame comes in way too fast, just drop
           if (time_diff < -frame_variation_threshold) {
             continue;
+          }
+
+          // Shell: live frame rate: hold a frame that is not due yet (a held frame is due now)
+          if (decimate_interval_us > 0) {
+            const auto ts_us = std::chrono::duration_cast<std::chrono::microseconds>(current_timestamp.time_since_epoch()).count();
+            if (!held && !::stream::live_fps::keep_frame(ts_us, decimate_next_us, decimate_interval_us / 4)) {
+              held_img = std::move(img);
+              continue;
+            }
+            decimate_next_us = ::stream::live_fps::next_deadline(decimate_next_us, ts_us, decimate_interval_us);
           }
 
           if (session->convert(*img)) {
@@ -2629,6 +2698,7 @@ namespace video {
     }
 
     int frame_nr = 1;
+    int live_fps = 0;  // Shell: live frame rate (0 = the stream's), kept across encoder reinit
 
     auto touch_port_event = mail->event<input::touch_port_t>(mail::touch_port);
     auto hdr_event = mail->event<hdr_info_t>(mail::hdr);
@@ -2679,6 +2749,7 @@ namespace video {
         mail,
         images,
         config,
+        live_fps,
         display,
         std::move(encode_device),
         ref->reinit_event,

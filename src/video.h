@@ -248,6 +248,15 @@ namespace video {
     virtual bool set_bitrate(int kbps) {
       return false;
     }
+
+    /**
+     * @brief Shell: change the frame rate the encoder's rate control assumes (live frame rate), so
+     *        each frame at a lowered rate may use more bits.
+     * @return `false` if this encoder cannot change it during a stream.
+     */
+    virtual bool set_framerate(int fps) {
+      return false;
+    }
   };
 
   // encoders
@@ -395,6 +404,11 @@ namespace video {
    * @brief Shell: whether the active encoder can change the bitrate during a stream (NVENC).
    */
   bool live_bitrate_supported();
+
+  /**
+   * @brief Shell: whether the active encoder can lower the frame rate during a stream (NVENC).
+   */
+  bool live_fps_supported();
 
   /**
    * @brief Probe encoders and select the preferred encoder.

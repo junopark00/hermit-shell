@@ -35,6 +35,7 @@
 #include "globals.h"
 #include "httpcommon.h"
 #include "live_fec.h"
+#include "live_fps.h"
 #include "logging.h"
 #include "network.h"
 #include "nvhttp.h"
@@ -1297,6 +1298,11 @@ namespace nvhttp {
       // Shell: live FEC protocol version (docs/features.md "Live FEC changes"): the host has
       // GET /actions/fec. Paired clients only, like the other live capabilities.
       tree.put("root.LiveFec", 1);
+      // Shell: live frame rate (docs/features.md "Live frame rate changes"): GET /actions/fps, only
+      // while the active encoder can change its frame rate during a stream (NVENC).
+      if (video::live_fps_supported()) {
+        tree.put("root.LiveFps", 1);
+      }
 
     #ifdef _WIN32
       tree.put("root.VirtualDisplayCapable", true);
@@ -2575,6 +2581,49 @@ namespace nvhttp {
   }
 
   /**
+   * @brief Shell: GET /actions/fps?fps=N lowers the frame rate of the caller's running stream
+   *        without restarting it (docs/features.md "Live frame rate changes"); `fps=default` or `0`
+   *        returns to the stream's frame rate. Replies "fps=<effective>" once the request is queued
+   *        for the encoder thread: at least live_fps::min_fps, at most the stream's frame rate. 400
+   *        for a value that is not a non-negative integer, 501 if the encoder cannot change it live,
+   *        403 if the caller is not streaming.
+   */
+  void setFps(resp_https_t response, req_https_t request) {
+    print_req<ShellHTTPS>(request);
+
+    auto named_cert_p = get_verified_cert(request);
+    if (!(named_cert_p->perm & PERM::_allow_view)) {
+      response->write(SimpleWeb::StatusCode::client_error_unauthorized);
+      response->close_connection_after_response = true;
+      return;
+    }
+
+    auto args = request->parse_query_string();
+    const auto fps = stream::live_fps::parse_fps(get_arg(args, "fps", ""));
+    if (!fps) {
+      response->write(SimpleWeb::StatusCode::client_error_bad_request, "fps must be an integer 0.. or default"sv);
+      response->close_connection_after_response = true;
+      return;
+    }
+
+    if (!video::live_fps_supported()) {
+      response->write(SimpleWeb::StatusCode::server_error_not_implemented, "encoder cannot change the frame rate live"sv);
+      response->close_connection_after_response = true;
+      return;
+    }
+
+    auto session = rtsp_stream::find_session(named_cert_p->uuid);
+    const int effective = session ? stream::session::set_fps(*session, *fps) : 0;
+    if (!effective) {
+      response->write(SimpleWeb::StatusCode::client_error_forbidden, "not streaming"sv);
+      response->close_connection_after_response = true;
+      return;
+    }
+
+    response->write("fps=" + std::to_string(effective) + "\n");
+  }
+
+  /**
    * @brief Shell: GET /actions/cursor, the local cursor (docs/features.md "Local cursor"), for the
    *        caller's own running stream.
    * @details `mode=local&v=1` asks the host to send the pointer shape and visibility over the control
@@ -3378,6 +3427,7 @@ namespace nvhttp {
     };
     https_server.resource["^/actions/bitrate$"]["GET"] = setBitrate;
     https_server.resource["^/actions/fec$"]["GET"] = setFec;
+    https_server.resource["^/actions/fps$"]["GET"] = setFps;
     https_server.resource["^/actions/cursor$"]["GET"] = cursorAction;
     https_server.resource["^/actions/power$"]["GET"] = power;
     https_server.resource["^/actions/clipboard$"]["POST"] = [&https_server](auto resp, auto req) {

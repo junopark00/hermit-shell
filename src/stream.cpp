@@ -34,6 +34,7 @@ extern "C" {
 #include "globals.h"
 #include "input.h"
 #include "live_fec.h"
+#include "live_fps.h"
 #include "logging.h"
 #include "network.h"
 #include "platform/common.h"
@@ -390,6 +391,7 @@ namespace stream {
       safe::mail_raw_t::event_t<bool> idr_events;
       safe::mail_raw_t::event_t<std::pair<int64_t, int64_t>> invalidate_ref_frames_events;
       safe::mail_raw_t::event_t<int> bitrate_events;  // Shell: live bitrate changes
+      safe::mail_raw_t::event_t<int> fps_events;  // Shell: live frame rate changes (effective fps)
 
       std::unique_ptr<platf::deinit_t> qos;
     } video;
@@ -453,6 +455,14 @@ namespace stream {
     std::atomic<std::int64_t> fec_log_ms {0};  // steady clock, ms, of the last "FEC for [...]" log line
     std::atomic<int> fec_percent_logged {0};  // effective value of that line (0 = none yet: the configured one)
     std::atomic<bool> fec_log_pending {false};  // a change waits for the log window to open (the video thread flushes it)
+
+    // Shell: live frame rate (docs/features.md "Live frame rate changes"). Written by the HTTPS
+    // thread (/actions/fps); the encoder thread gets the effective value through video.fps_events.
+    std::atomic<int> fps_override {0};  // 0 = none: the stream's frame rate
+    std::atomic<int> fps_min {0};  // lowest effective rate of the session, for the session record (0 = never lowered)
+    std::atomic<std::int64_t> fps_log_ms {0};  // steady clock, ms, of the last "Frame rate for [...]" log line
+    std::atomic<int> fps_logged {0};  // effective value of that line (0 = none yet: the stream's rate)
+    std::atomic<bool> fps_log_pending {false};  // a change waits for the log window to open (the video thread flushes it)
 
     // Shell: local cursor (docs/features.md "Local cursor"). The atomics are written by the HTTPS
     // thread (/actions/cursor); everything else belongs to the control thread, which relays the
@@ -1661,6 +1671,9 @@ namespace stream {
       if (session->fec_log_pending.load(std::memory_order_relaxed)) {
         session::log_fec_change(*session);
       }
+      if (session->fps_log_pending.load(std::memory_order_relaxed)) {
+        session::log_fps_change(*session);
+      }
 
       // Insert space for packet headers
       auto blocksize = session->config.packetsize + MAX_RTP_HEADER_SIZE;
@@ -2356,6 +2369,9 @@ namespace stream {
       entry["fec_percent"] = config::stream.fec_percentage;
       // Live FEC: the highest percentage the session used (the configured one without any request)
       entry["fec_percent_max"] = std::max(config::stream.fec_percentage, session.fec_percent_max.load(std::memory_order_relaxed));
+      // Live frame rate: the lowest rate the session ran at (the stream's fps without any request)
+      const int fps_min = session.fps_min.load(std::memory_order_relaxed);
+      entry["fps_min"] = fps_min > 0 ? std::min(fps_min, session.config.monitor.framerate) : session.config.monitor.framerate;
       // Local cursor: "local" when the client drew the cursor itself at any time
       entry["cursor"] = session.cursor.ever_local.load(std::memory_order_relaxed) ? "local" : "host";
       if (const char *reason = session.end_reason.load()) {
@@ -2456,6 +2472,48 @@ namespace stream {
       return live_fec::effective_percent(override_percent, configured);
     }
 
+    void log_fps_change(session_t &session) {
+      // Same 500 ms window as log_fec_change: a change inside it is logged, with the latest value,
+      // when it opens, from the next request or from the video thread.
+      const int stream_fps = session.config.monitor.framerate;
+      const int now_fps = live_fps::effective_fps(session.fps_override.load(std::memory_order_relaxed), stream_fps);
+      const int logged = live_fps::effective_fps(session.fps_logged.load(std::memory_order_relaxed), stream_fps);
+      if (now_fps == logged) {
+        session.fps_log_pending.store(false, std::memory_order_relaxed);
+        return;
+      }
+      const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+      auto last_ms = session.fps_log_ms.load(std::memory_order_relaxed);
+      if (now_ms - last_ms < 500) {
+        session.fps_log_pending.store(true, std::memory_order_relaxed);
+        return;
+      }
+      // The HTTPS and the video thread may both get here; the one that claims the window logs.
+      if (!session.fps_log_ms.compare_exchange_strong(last_ms, now_ms, std::memory_order_relaxed)) {
+        return;
+      }
+      session.fps_logged.store(now_fps, std::memory_order_relaxed);
+      session.fps_log_pending.store(false, std::memory_order_relaxed);
+      BOOST_LOG(info) << "Frame rate for ["sv << session.device_name << "] changed to "sv << now_fps << " fps (was "sv << logged << " fps)"sv;
+    }
+
+    int set_fps(session_t &session, int fps) {
+      if (session.state.load(std::memory_order_relaxed) != state_e::RUNNING || !session.video.fps_events) {
+        return 0;
+      }
+      const int override_fps = std::max(fps, 0);
+      session.fps_override.store(override_fps, std::memory_order_relaxed);
+      const int effective = live_fps::effective_fps(override_fps, session.config.monitor.framerate);
+      int min_seen = session.fps_min.load(std::memory_order_relaxed);
+      while ((min_seen == 0 || effective < min_seen) && !session.fps_min.compare_exchange_weak(min_seen, effective, std::memory_order_relaxed)) {
+      }
+      // The encoder thread applies it before its next frame; it logs a warning if the encoder
+      // refuses the new rate (frames are still dropped down to it, the reply only confirms the request).
+      session.video.fps_events->raise(effective);
+      log_fps_change(session);
+      return effective;
+    }
+
     std::string live_info_json(const session_t &session) {
       static constexpr const char *codecs[] = {"H.264", "HEVC", "AV1"};
       static constexpr const char *states[] = {"stopped", "stopping", "starting", "running"};
@@ -2488,6 +2546,8 @@ namespace stream {
       info["pacing_auto"] = session.config.videoPacingAuto;
       // Live FEC: the percentage the next frame uses
       info["fec_percent"] = live_fec::effective_percent(session.fec_percentage_override.load(std::memory_order_relaxed), config::stream.fec_percentage);
+      // Live frame rate: the rate the encoder runs at (the stream's fps without a request)
+      info["fps_effective"] = live_fps::effective_fps(session.fps_override.load(std::memory_order_relaxed), monitor.framerate);
       // Local cursor: whether this client draws the cursor itself, and whether the host still
       // draws it into the video (another session did not ask)
       info["cursor"] = session.cursor.requested.load(std::memory_order_relaxed) ? "local" : "host";
@@ -2791,6 +2851,7 @@ namespace stream {
       session->video.idr_events = mail->event<bool>(mail::idr);
       session->video.invalidate_ref_frames_events = mail->event<std::pair<int64_t, int64_t>>(mail::invalidate_ref_frames);
       session->video.bitrate_events = mail->event<int>(mail::bitrate);
+      session->video.fps_events = mail->event<int>(mail::fps);
       session->video.lowseq = 0;
       session->video.ping_payload = launch_session.av_ping_payload;
       if (config.encryptionFlagsEnabled & SS_ENC_VIDEO) {

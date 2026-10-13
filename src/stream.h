@@ -107,6 +107,22 @@ namespace stream {
     void log_fec_change(session_t &session);
 
     /**
+     * @brief Shell: set or clear the client's live frame rate (docs/features.md "Live frame rate
+     *        changes"). HTTPS thread; the encoder thread applies it before its next frame.
+     * @param fps The requested frame rate, or 0 to return to the stream's frame rate.
+     * @return The frame rate the encoder runs at (live_fps::effective_fps), or 0 if the session is
+     *         not streaming.
+     */
+    int set_fps(session_t &session, int fps);
+
+    /**
+     * @brief Shell: log a live frame rate change, at most one line per 500 ms per session; a change
+     *        inside the window is logged when it opens. Called by set_fps and, while a change is
+     *        pending, by the video thread before a frame.
+     */
+    void log_fps_change(session_t &session);
+
+    /**
      * @brief Shell: live figures of a session for the web dashboard, as a JSON object.
      */
     std::string live_info_json(const session_t &session);
