@@ -11,7 +11,7 @@ const defaultGameStreamPort = 47989
 
 const config = ref(props.config)
 
-const effectivePort = computed(() => +config.value?.port ?? defaultGameStreamPort)
+const effectivePort = computed(() => +(config.value?.port ?? defaultGameStreamPort))
 
 // Webhooks (docs/features.md "Webhooks"): the URL and the options are ordinary settings; the
 // secret is written through its own API and never read back; a test event is queued and its

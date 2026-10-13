@@ -475,7 +475,7 @@ export default {
         return 'unknown';
       }
 
-      if (typeof vd.driver_state === 'string' && vd.driver_state) {
+      if (vd.driver_state) {
         return vd.driver_state;
       }
 
@@ -645,7 +645,7 @@ export default {
           throw new Error('shell/sessions: unexpected response');
         }
 
-        this.sessions = r.sessions.filter(s => s && typeof s === 'object');
+        this.sessions = r.sessions.filter(s => s instanceof Object);
         this.sessionsFailed = false;
       } catch (e) {
         if (!Array.isArray(this.sessions)) {
@@ -682,9 +682,9 @@ export default {
         }
 
         const before = this.live ? this.live.map(s => this.liveKey(s)).sort().join('|') : null;
-        this.live = body.sessions.filter(s => s && typeof s === 'object');
-        this.vdisplay = body.vdisplay && typeof body.vdisplay === 'object' ? body.vdisplay : null;
-        this.clipboardHelper = body.clipboard_helper && typeof body.clipboard_helper === 'object' ? body.clipboard_helper : null;
+        this.live = body.sessions.filter(s => s instanceof Object);
+        this.vdisplay = body.vdisplay instanceof Object ? body.vdisplay : null;
+        this.clipboardHelper = body.clipboard_helper instanceof Object ? body.clipboard_helper : null;
         this.liveError = false;
         this.trackRecovery();
 
@@ -1007,7 +1007,7 @@ export default {
     relativeTime(value) {
       const d = this.parseLocal(value);
 
-      if (!d || typeof Intl.RelativeTimeFormat !== 'function') {
+      if (!d || !('RelativeTimeFormat' in Intl)) {
         return '';
       }
 

@@ -50,16 +50,11 @@ class ShellVersion {
     return versionParts;
   }
 
+  // otherVersion is a ShellVersion or a version string such as "v1.2.0-beta.1"
   isGreater(otherVersion, checkIncremental) {
-    let otherVersionParts;
-
-    if (otherVersion instanceof ShellVersion) {
-      otherVersionParts = otherVersion.versionParts;
-    } else if (typeof otherVersion === 'string') {
-      otherVersionParts = this.parseVersion(otherVersion);
-    } else {
-      throw new Error('Invalid argument: otherVersion must be a ShellVersion object or a version string');
-    }
+    const otherVersionParts = otherVersion instanceof ShellVersion
+      ? otherVersion.versionParts
+      : this.parseVersion(otherVersion);
 
     if (!this.versionParts || !otherVersionParts) {
       return false;
