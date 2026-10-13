@@ -297,7 +297,10 @@ onBeforeUnmount(stopWebhookPoll)
           </span>
         </label>
         <div class="input-group">
-          <input type="password" class="form-control" id="webhook_secret" autocomplete="new-password" v-model="webhookSecret" />
+          <!-- The real value is cleared after a save (the page never keeps the secret); masked dots
+               stand in as a placeholder while the host reports a secret -->
+          <input type="password" class="form-control" id="webhook_secret" autocomplete="new-password" v-model="webhookSecret"
+                 :placeholder="webhookStatus && webhookStatus.secret_set ? '••••••••••••••••' : ''" />
           <button class="btn btn-outline-primary" type="button" :disabled="!webhookSecret" @click="saveWebhookSecret(false)">{{ $t('config.webhook_secret_save') }}</button>
           <button class="btn btn-outline-secondary" type="button" :disabled="!(webhookStatus && webhookStatus.secret_set)" @click="saveWebhookSecret(true)">{{ $t('config.webhook_secret_clear') }}</button>
         </div>
