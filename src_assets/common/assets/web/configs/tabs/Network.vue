@@ -301,15 +301,15 @@ onBeforeUnmount(stopWebhookPoll)
                stand in as a placeholder while the host reports a secret -->
           <input type="password" class="form-control" id="webhook_secret" autocomplete="new-password" v-model="webhookSecret"
                  :placeholder="webhookStatus && webhookStatus.secret_set ? '••••••••••••••••' : ''" />
-          <button class="btn btn-outline-primary" type="button" :disabled="!webhookSecret" @click="saveWebhookSecret(false)">{{ $t('config.webhook_secret_save') }}</button>
-          <button class="btn btn-outline-secondary" type="button" :disabled="!(webhookStatus && webhookStatus.secret_set)" @click="saveWebhookSecret(true)">{{ $t('config.webhook_secret_clear') }}</button>
+          <button class="btn btn-primary" type="button" :disabled="!webhookSecret" @click="saveWebhookSecret(false)">{{ $t('config.webhook_secret_save') }}</button>
+          <button class="btn btn-danger" type="button" :disabled="!(webhookStatus && webhookStatus.secret_set)" @click="saveWebhookSecret(true)">{{ $t('config.webhook_secret_clear') }}</button>
         </div>
         <div class="form-text">{{ $t('config.webhook_secret_desc') }}</div>
         <div class="form-text" v-if="webhookSecretMessage">{{ $t('config.' + webhookSecretMessage) }}</div>
       </div>
 
       <div class="mb-1">
-        <button class="btn btn-outline-primary" type="button" :disabled="!(webhookStatus && webhookStatus.enabled)" @click="sendWebhookTest">{{ $t('config.webhook_test') }}</button>
+        <button class="btn btn-primary" type="button" :disabled="!(webhookStatus && webhookStatus.enabled)" @click="sendWebhookTest">{{ $t('config.webhook_test') }}</button>
         <span class="ms-2 form-text" v-if="webhookTestMessage">{{ webhookTestMessage.startsWith('webhook_') ? $t('config.' + webhookTestMessage) : webhookTestMessage }}</span>
         <div class="form-text" v-if="webhookStatus && !webhookStatus.enabled && !webhookStatus.url_error">{{ $t('config.webhook_test_off') }}</div>
         <div class="form-text" v-if="webhookStatus && webhookStatus.last">
