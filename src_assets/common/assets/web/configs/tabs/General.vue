@@ -11,8 +11,11 @@ const props = defineProps({
 })
 
 const config = ref(props.config)
+
 const globalPrepCmd = ref(props.globalPrepCmd)
+
 const globalStateCmd = ref(props.globalStateCmd)
+
 const serverCmd = ref(props.serverCmd)
 
 const cmds = ref({
@@ -36,6 +39,7 @@ function addCmd(cmdArr, template, idx) {
   if (props.platform === 'windows') {
     _tpl.elevated = false;
   }
+
   if (idx < 0) {
     cmdArr.push(_tpl);
   } else {

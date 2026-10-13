@@ -14,6 +14,7 @@ import process from 'process'
  * The vite-plugin-ejs handles this automatically
  */
 let assetsSrcPath = 'src_assets/common/assets/web';
+
 let assetsDstPath = 'build/assets/web';
 
 if (process.env.SHELL_BUILD_HOMEBREW) {
@@ -32,6 +33,7 @@ else {
         console.log("Using srcdir from Cmake: " + path);
         assetsSrcPath = path;
     }
+
     if (process.env.SHELL_ASSETS_DIR) {
         let path = resolve(fs.realpathSync(process.env.SHELL_ASSETS_DIR), "assets/web");
         console.log("Using destdir from Cmake: " + path);

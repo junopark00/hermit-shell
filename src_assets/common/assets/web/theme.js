@@ -1,8 +1,10 @@
 const getStoredTheme = () => localStorage.getItem('theme')
+
 const setStoredTheme = theme => localStorage.setItem('theme', theme)
 
 export const getPreferredTheme = () => {
     const storedTheme = getStoredTheme()
+
     if (storedTheme) {
         return storedTheme
     }
@@ -70,6 +72,7 @@ export function loadAutoTheme() {
 
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
         const storedTheme = getStoredTheme()
+
         if (storedTheme !== 'light' && storedTheme !== 'dark') {
             setTheme(getPreferredTheme())
         }

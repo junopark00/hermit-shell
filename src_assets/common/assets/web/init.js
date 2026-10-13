@@ -11,6 +11,7 @@ export function initApp(app, config) {
         app.use(i18n);
         app.provide('i18n', i18n.global)
         app.mount('#app');
+
         if (config) {
             config(app)
         }

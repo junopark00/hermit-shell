@@ -52,6 +52,7 @@ export default {
     // Links are relative ("./config"), so compare resolved paths rather than the href text.
     const trim = p => p.replace(/\/$/, '') || '/';
     const here = trim(document.location.pathname);
+
     for (const el of this.$el.querySelectorAll("a.nav-link[href]")) {
       if (trim(new URL(el.href).pathname) === here) el.classList.add("active");
     }

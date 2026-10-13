@@ -316,11 +316,16 @@
 
 <script>
 const POLL_MS = 10000;
+
 const LIVE_POLL_MS = 2000;
+
 const RECOVERY_WINDOW_MS = 60000;
+
 // Shown as a per-minute rate only once the samples cover most of a minute
 const RECOVERY_MIN_SPAN_MS = 50000;
+
 const END_REASONS = ['disconnect', 'timeout', 'host', 'app_exit', 'client_quit'];
+
 // The permissions pin.html shows as toggles, counted the same way: list is implied by view or
 // launch and view by launch (pin.html shows them as on), plus the file upload and download toggles.
 const PERMISSIONS = [
@@ -335,9 +340,11 @@ const PERMISSIONS = [
 
 async function getJson(url) {
   const r = await fetch(url, { credentials: 'include' });
+
   if (!r.ok) {
     throw new Error(`${url}: HTTP ${r.status}`);
   }
+
   return r.json();
 }
 
@@ -395,8 +402,10 @@ export default {
       if (!this.currentApp) {
         return '';
       }
+
       const current = String(this.currentApp);
       const app = this.apps.find(a => String(a.uuid) === current || String(a.id) === current);
+
       return app ? app.name : current;
     },
     connectedClients() {
@@ -409,12 +418,14 @@ export default {
       if (!this.backups) {
         return [];
       }
+
       return this.showAllBackups ? this.backups : this.backups.slice(0, this.collapsedCount);
     },
     visibleSessions() {
       if (!this.sessions) {
         return [];
       }
+
       return this.showAllSessions ? this.sessions : this.sessions.slice(0, this.sessionsCollapsedCount);
     },
     lang() {
@@ -422,81 +433,104 @@ export default {
     },
     vdisplayHelper() {
       const vd = this.vdisplay;
+
       if (!vd) {
         return '';
       }
+
       if (vd.released) {
         return this.$t('shell_dashboard.vdisplay_released_desc');
       }
+
       if (!vd.active) {
         return this.$t('shell_dashboard.vdisplay_unused_desc');
       }
+
       if (vd.release_requested) {
         return this.$t('shell_dashboard.vdisplay_releasing');
       }
+
       if (vd.release_pending) {
         return this.$t('shell_dashboard.vdisplay_pending_desc');
       }
+
       const parts = [];
+
       if (vd.other_displays >= 0) {
         parts.push(vd.other_displays > 0
           ? this.$t('shell_dashboard.vdisplay_monitors', { n: vd.other_displays })
           : this.$t('shell_dashboard.vdisplay_no_monitors'));
       }
+
       parts.push(this.$t(vd.auto_release ? 'shell_dashboard.vdisplay_auto_on' : 'shell_dashboard.vdisplay_auto_off'));
+
       return parts.join(' \u00b7 ');
     },
     // "driver_state": ok | missing | incompatible | watchdog | unknown | failed (hosts before
     // 1.1.2 send only the "driver" boolean)
     vdisplayDriverState() {
       const vd = this.vdisplay;
+
       if (!vd) {
         return 'unknown';
       }
+
       if (typeof vd.driver_state === 'string' && vd.driver_state) {
         return vd.driver_state;
       }
+
       return vd.driver ? 'ok' : 'unknown';
     },
     vdisplayDriverText() {
       const known = ['ok', 'missing', 'incompatible', 'watchdog', 'unknown', 'failed'];
       const state = this.vdisplayDriverState;
+
       return this.$t('shell_dashboard.vdisplay_driver_' + (known.includes(state) ? state : 'failed'));
     },
     vdisplayDriverClass() {
       const state = this.vdisplayDriverState;
+
       if (state === 'ok') {
         return 'shell-status-ok';
       }
+
       // Not installed is a choice some hosts make (streams then use a monitor): grey, not red
       if (state === 'unknown' || state === 'missing') {
         return 'shell-status-off';
       }
+
       return 'shell-status-bad';
     },
     clipboardHelperClass() {
       const state = this.clipboardHelper ? this.clipboardHelper.state : '';
+
       if (state === 'running') {
         return 'shell-status-ok';
       }
+
       return state === 'failed' ? 'shell-status-warn' : 'shell-status-off';
     },
     clipboardHelperText() {
       const state = this.clipboardHelper ? this.clipboardHelper.state : '';
       const known = ['running', 'starting', 'no-user', 'failed', 'stopped'];
+
       return this.$t('shell_dashboard.clipboard_' + (known.includes(state) ? state.replace('-', '_') : 'stopped'));
     },
     clipboardHelperDesc() {
       const h = this.clipboardHelper;
+
       if (!h) {
         return '';
       }
+
       if (h.state === 'running') {
         return h.restarts > 0
           ? this.$t('shell_dashboard.clipboard_running_desc_restarted', { n: h.restarts })
           : this.$t('shell_dashboard.clipboard_running_desc');
       }
+
       const why = h.detail ? ' (' + h.detail + ')' : '';
+
       return this.$t('shell_dashboard.clipboard_fallback_desc') + why;
     },
   },
@@ -523,18 +557,23 @@ export default {
       if (this.refreshing) {
         return;
       }
+
       this.refreshing = true;
       const connectedBefore = this.clients ? this.connectedKey() : null;
       const tasks = [this.loadApps(), this.loadClients()];
+
       if (full) {
         tasks.push(this.loadConfig(), this.loadBackups(), this.loadSessions());
       }
+
       await Promise.allSettled(tasks);
+
       // The history only changes when a session ends, so reload it when the set of connected
       // devices changes (a count alone misses one session ending as another starts).
       if (!full && connectedBefore !== null && this.clients && this.connectedKey() !== connectedBefore) {
         await this.loadSessions();
       }
+
       this.updatedAt = new Date();
       this.refreshing = false;
     },
@@ -563,9 +602,11 @@ export default {
     async loadClients() {
       try {
         const r = await getJson('./api/clients/list');
+
         if (!r.status) {
           throw new Error('clients/list: status false');
         }
+
         this.clients = (r.named_certs || []).map(({ name, uuid, connected, perm, display_mode }) => ({
           name, uuid, connected: !!connected, perm: parseInt(perm, 10) || 0, display_mode: display_mode || '',
         }));
@@ -579,9 +620,11 @@ export default {
       // Older host builds have no such endpoint; show a quiet "unavailable" state then.
       try {
         const r = await getJson('./api/shell/backups');
+
         if (!r || r.status !== true || !Array.isArray(r.backups)) {
           throw new Error('shell/backups: unexpected response');
         }
+
         this.backups = r.backups;
         this.backupsFailed = false;
       } catch (e) {
@@ -597,9 +640,11 @@ export default {
       // history has loaded, a later failed poll keeps the rows instead of claiming it is missing.
       try {
         const r = await getJson('./api/shell/sessions');
+
         if (!r || r.status !== true || !Array.isArray(r.sessions)) {
           throw new Error('shell/sessions: unexpected response');
         }
+
         this.sessions = r.sessions.filter(s => s && typeof s === 'object');
         this.sessionsFailed = false;
       } catch (e) {
@@ -614,26 +659,35 @@ export default {
       if (this.liveLoading) {
         return;
       }
+
       this.liveLoading = true;
+
       try {
         const r = await fetch('./api/shell/live', { credentials: 'include' });
+
         if (r.status === 404) {
           this.liveFailed = true;
+
           return;
         }
+
         if (!r.ok) {
           throw new Error(`shell/live: HTTP ${r.status}`);
         }
+
         const body = await r.json();
+
         if (!body || body.status !== true || !Array.isArray(body.sessions)) {
           throw new Error('shell/live: unexpected response');
         }
+
         const before = this.live ? this.live.map(s => this.liveKey(s)).sort().join('|') : null;
         this.live = body.sessions.filter(s => s && typeof s === 'object');
         this.vdisplay = body.vdisplay && typeof body.vdisplay === 'object' ? body.vdisplay : null;
         this.clipboardHelper = body.clipboard_helper && typeof body.clipboard_helper === 'object' ? body.clipboard_helper : null;
         this.liveError = false;
         this.trackRecovery();
+
         // A stream started or ended (also a quick reconnect of the same device): the device list
         // and the history change with it
         if (before !== null && this.live.map(s => this.liveKey(s)).sort().join('|') !== before) {
@@ -654,6 +708,7 @@ export default {
     trackRecovery() {
       const now = Date.now();
       const samples = {};
+
       for (const s of this.live) {
         const key = this.liveKey(s);
         const total = (Number(s.idr_requests) || 0) + (Number(s.ref_invalidations) || 0);
@@ -661,56 +716,71 @@ export default {
         list.push({ t: now, n: total });
         samples[key] = list;
       }
+
       this.recoverySamples = samples;
     },
     recoveryCount(s) {
       // Requests within the last minute of polling (the totals only grow during a session)
       const list = this.recoverySamples[this.liveKey(s)] || [];
+
       if (list.length < 2 || list[list.length - 1].t - list[0].t < RECOVERY_MIN_SPAN_MS) {
         return null;
       }
+
       return Math.max(0, list[list.length - 1].n - list[0].n);
     },
     recoveryPerMinute(s) {
       const n = this.recoveryCount(s);
+
       return n === null ? '-' : this.$t('shell_dashboard.recovery_per_min', { n });
     },
     recoveryLevel(s) {
       const n = this.recoveryCount(s);
+
       if (n === null) {
         return 'shell-status-off';
       }
+
       return n === 0 ? 'shell-status-ok' : n <= 3 ? 'shell-status-warn' : 'shell-status-bad';
     },
     recoveryDetail(s) {
       const parts = [this.$t('shell_dashboard.recovery_totals', {
         idr: Number(s.idr_requests) || 0, ref: Number(s.ref_invalidations) || 0,
       })];
+
       if (s.last_recovery_s !== undefined) {
         parts.push(this.$t('shell_dashboard.recovery_last', { time: this.formatDuration(s.last_recovery_s) }));
       }
+
       if (s.reported_frames_lost) {
         parts.push(this.$t('shell_dashboard.recovery_lost', { n: s.reported_frames_lost }));
       }
+
       return parts.join(' \u00b7 ');
     },
     liveBitrateDetail(s) {
       const parts = [this.$t('shell_dashboard.live_encoder', { rate: this.formatBitrate(s.encoder_kbps) })];
       const pacing = this.pacingDetail(s);
+
       if (pacing) {
         parts.push(pacing);
       }
+
       parts.push(this.$t(s.live_bitrate ? 'shell_dashboard.live_bitrate_on' : 'shell_dashboard.live_bitrate_off'));
+
       return parts.join(' \u00b7 ');
     },
     async releaseVirtualDisplay() {
       const streaming = (this.live || []).filter(s => s.state === 'running').length;
+
       if (streaming && !window.confirm(this.$t('shell_dashboard.vdisplay_release_confirm', { n: streaming }))) {
         return;
       }
+
       this.releasingVd = true;
       this.vdisplayError = false;
       let ok = false;
+
       try {
         const r = await fetch('./api/shell/display/release', {
           credentials: 'include',
@@ -718,10 +788,12 @@ export default {
           headers: { 'Content-Type': 'application/json' },
           body: '{}',
         });
+
         ok = r.ok && (await r.json()).status === true;
       } catch (e) {
         console.error(e);
       }
+
       this.vdisplayError = !ok;
       // The host releases it within a few seconds (after the streams end)
       setTimeout(() => {
@@ -733,9 +805,11 @@ export default {
       if (!window.confirm(this.$t('shell_dashboard.live_disconnect_confirm', { name: s.client || s.uuid }))) {
         return;
       }
+
       this.disconnecting = s.uuid;
       this.disconnectError = '';
       let ok = false;
+
       try {
         const r = await fetch('./api/clients/disconnect', {
           credentials: 'include',
@@ -743,33 +817,41 @@ export default {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ uuid: s.uuid }),
         });
+
         ok = r.ok && (await r.json()).status === true;
       } catch (e) {
         console.error(e);
       }
+
       if (!ok) {
         this.disconnectError = s.uuid;
       }
+
       this.disconnecting = '';
       setTimeout(() => this.loadLive(), 500);
     },
     permissionSummary(perm) {
       const granted = PERMISSIONS.filter(p => (perm & (p.bit | (p.impliedBy || 0))) !== 0).length;
+
       if (granted === PERMISSIONS.length) {
         return this.$t('shell_dashboard.perm_all');
       }
+
       if (granted === 0) {
         return this.$t('shell_dashboard.perm_none');
       }
+
       return this.$t('shell_dashboard.perm_some', { n: granted, total: PERMISSIONS.length });
     },
     rollbackCommand(backup) {
       const path = String(backup.path || '').replace(/"/g, '');
+
       return `powershell -ExecutionPolicy Bypass -File .\\Install-Shell.ps1 -Rollback -BackupPath "${path}"`;
     },
     async copyRollback(backup) {
       const text = this.rollbackCommand(backup);
       let ok = false;
+
       try {
         if (navigator.clipboard && window.isSecureContext) {
           await navigator.clipboard.writeText(text);
@@ -778,10 +860,13 @@ export default {
       } catch (e) {
         ok = false;
       }
+
       if (!ok) {
         ok = this.copyWithSelection(text);
       }
+
       this.copyState = { ...this.copyState, [backup.name]: ok ? 'ok' : 'failed' };
+
       if (ok) {
         setTimeout(() => {
           if (this.copyState[backup.name] === 'ok') {
@@ -799,12 +884,15 @@ export default {
       document.body.appendChild(area);
       area.select();
       let ok = false;
+
       try {
         ok = document.execCommand('copy');
       } catch (e) {
         ok = false;
       }
+
       document.body.removeChild(area);
+
       return ok;
     },
     parseLocal(value) {
@@ -812,77 +900,99 @@ export default {
       if (!value) {
         return null;
       }
+
       const d = new Date(value);
+
       return isNaN(d.getTime()) ? null : d;
     },
     formatStamp(value) {
       const d = this.parseLocal(value);
+
       if (!d) {
         return '';
       }
+
       return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
     },
     formatDuration(seconds) {
       const total = Math.max(0, Math.round(Number(seconds)));
+
       if (!isFinite(total)) {
         return '-';
       }
+
       const h = Math.floor(total / 3600);
       const m = Math.floor((total % 3600) / 60);
       const s = total % 60;
+
       return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
     },
     formatVideo(session) {
       const size = session.width && session.height ? `${session.width}\u00d7${session.height}` : '';
       const fps = session.fps ? `${session.fps} fps` : '';
+
       return [size, fps].filter(Boolean).join(' \u00b7 ') || '-';
     },
     videoDetail(session) {
       const parts = [];
+
       if (session.codec) {
         parts.push(session.codec);
       }
+
       if (session.hdr) {
         parts.push(this.$t('shell_dashboard.hdr_requested'));
       }
+
       // Local cursor: live entries say whether the host still draws it (another client did not ask)
       if (session.cursor === 'local') {
         parts.push(this.$t(session.cursor_composing ? 'shell_dashboard.cursor_local_composing' : 'shell_dashboard.cursor_local'));
       } else if (session.cursor === 'host') {
         parts.push(this.$t('shell_dashboard.cursor_host'));
       }
+
       // Encode time guard: live entries carry the current value, history entries the session's peak
       if (session.encode_budget_pct !== undefined) {
         parts.push(this.$t('shell_dashboard.encode_budget_detail', { pct: session.encode_budget_pct }));
       }
+
       if (session.encode_budget_max_pct !== undefined) {
         parts.push(this.$t('shell_dashboard.encode_budget_max', { pct: session.encode_budget_max_pct }));
+
         if (session.encode_budget_exceeded) {
           parts.push(this.$t('shell_dashboard.encode_budget_exceeded'));
         }
       }
+
       return parts.join(' \u00b7 ');
     },
     formatBitrate(kbps) {
       const value = Number(kbps);
+
       if (!value || value <= 0) {
         return '-';
       }
+
       if (value < 1000) {
         return `${Math.round(value)} kbps`;
       }
+
       const mbps = value / 1000;
+
       return `${mbps >= 10 ? Math.round(mbps) : Math.round(mbps * 10) / 10} Mbps`;
     },
     pacingDetail(session) {
       const parts = [];
+
       if (session.pacing_mbps) {
         const key = session.pacing_auto ? 'shell_dashboard.pacing_auto' : 'shell_dashboard.pacing';
         parts.push(this.$t(key, { rate: session.pacing_mbps }));
       }
+
       if (session.fec_percent !== undefined && session.fec_percent !== null) {
         parts.push(`FEC ${session.fec_percent}%`);
       }
+
       return parts.join(' \u00b7 ');
     },
     endReason(reason) {
@@ -896,17 +1006,21 @@ export default {
     },
     relativeTime(value) {
       const d = this.parseLocal(value);
+
       if (!d || typeof Intl.RelativeTimeFormat !== 'function') {
         return '';
       }
+
       const seconds = Math.round((d.getTime() - Date.now()) / 1000);
       const units = [['year', 31536000], ['month', 2592000], ['day', 86400], ['hour', 3600], ['minute', 60]];
       const rtf = new Intl.RelativeTimeFormat(this.lang, { numeric: 'auto' });
+
       for (const [unit, size] of units) {
         if (Math.abs(seconds) >= size) {
           return rtf.format(Math.round(seconds / size), unit);
         }
       }
+
       return rtf.format(0, 'minute');
     },
   },

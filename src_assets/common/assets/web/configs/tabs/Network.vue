@@ -10,35 +10,45 @@ const props = defineProps([
 const defaultGameStreamPort = 47989
 
 const config = ref(props.config)
+
 const effectivePort = computed(() => +config.value?.port ?? defaultGameStreamPort)
 
 // Webhooks (docs/features.md "Webhooks"): the URL and the options are ordinary settings; the
 // secret is written through its own API and never read back; a test event is queued and its
 // result read from GET /api/shell/webhook.
 const webhookGroups = ['pairing', 'stream', 'app']
+
 const webhookEventList = computed(() =>
   String(config.value.webhook_events ?? '').split(',').map((s) => s.trim().toLowerCase()).filter((s) => s))
+
 const webhookEvent = (group) => computed({
   get: () => webhookEventList.value.includes(group),
   set: (on) => {
     const list = webhookEventList.value.filter((g) => g !== group)
+
     if (on) list.push(group)
     const selected = webhookGroups.filter((g) => list.includes(g))
     // An empty value is not written to shell.conf (the default would come back): `none` means no group
     config.value.webhook_events = selected.length ? selected.join(',') : 'none'
   },
 })
+
 const webhookEventModels = Object.fromEntries(webhookGroups.map((g) => [g, webhookEvent(g)]))
 
 const webhookStatus = ref(null)
+
 const webhookSecret = ref('')
+
 const webhookSecretMessage = ref('')
+
 const webhookTestMessage = ref('')
+
 let webhookPoll = null
 
 async function loadWebhookStatus() {
   try {
     const r = await fetch('./api/shell/webhook', { credentials: 'include' })
+
     if (r.ok) webhookStatus.value = await r.json()
   } catch (e) {
     console.error(e)
@@ -54,6 +64,7 @@ function stopWebhookPoll() {
 
 async function saveWebhookSecret(clear) {
   webhookSecretMessage.value = ''
+
   try {
     const r = await fetch('./api/shell/webhook/secret', {
       credentials: 'include',
@@ -61,7 +72,9 @@ async function saveWebhookSecret(clear) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ secret: clear ? '' : webhookSecret.value }),
     })
+
     const body = await r.json().catch(() => ({}))
+
     if (r.ok && body.status === true) {
       webhookSecret.value = ''
       webhookSecretMessage.value = clear ? 'webhook_secret_cleared' : 'webhook_secret_saved'
@@ -79,6 +92,7 @@ async function sendWebhookTest() {
   webhookTestMessage.value = ''
   stopWebhookPoll()
   const before = webhookStatus.value?.last?.time ?? null
+
   try {
     const r = await fetch('./api/shell/webhook/test', {
       credentials: 'include',
@@ -86,22 +100,28 @@ async function sendWebhookTest() {
       headers: { 'Content-Type': 'application/json' },
       body: '{}',
     })
+
     const body = await r.json().catch(() => ({}))
+
     if (!r.ok || body.status !== true) {
       webhookTestMessage.value = body.error || 'webhook_test_error'
+
       return
     }
   } catch (e) {
     console.error(e)
     webhookTestMessage.value = 'webhook_test_error'
+
     return
   }
+
   webhookTestMessage.value = 'webhook_test_queued'
   // The result arrives when the delivery thread is done (up to about 40 s with retries)
   let polls = 0
   webhookPoll = setInterval(async () => {
     await loadWebhookStatus()
     const last = webhookStatus.value?.last
+
     if ((last && last.time !== before) || ++polls >= 25) {
       stopWebhookPoll()
       webhookTestMessage.value = ''
@@ -110,6 +130,7 @@ async function sendWebhookTest() {
 }
 
 onMounted(loadWebhookStatus)
+
 onBeforeUnmount(stopWebhookPoll)
 </script>
 

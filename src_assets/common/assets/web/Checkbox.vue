@@ -1,6 +1,8 @@
 <script setup>
 const model = defineModel({ required: true });
+
 const slots = defineSlots();
+
 const props = defineProps({
   class: {
     type: String,
@@ -35,9 +37,11 @@ const props = defineProps({
 // Add the mandatory class values
 const extendedClassStr = (() => {
   let values = props.class.split(" ");
+
   if (!values.includes("form-check")) {
     values.push("form-check");
   }
+
   return values.join(" ");
 })();
 
@@ -47,6 +51,7 @@ const mapToBoolRepresentation = (value) => {
   if (value === true || value === false) {
     return { possibleValues: [true, false], value: value };
   }
+
   if (value === 1 || value === 0) {
     return { possibleValues: [1, 0], value: value };
   }
@@ -61,6 +66,7 @@ const mapToBoolRepresentation = (value) => {
   ];
 
   value = `${value}`.toLowerCase().trim();
+
   for (const pair of stringPairs) {
     if (value === pair[0] || value === pair[1]) {
       return { possibleValues: pair, value: value };
@@ -74,21 +80,26 @@ const mapToBoolRepresentation = (value) => {
 const checkboxValues = (() => {
   const mappedValues = (() => {
     const boolValues = mapToBoolRepresentation(model.value);
+
     if (boolValues !== null) {
       return boolValues.possibleValues;
     }
 
     // Return fallback if nothing matches
     console.error(`Checkbox value ${model.value} for "${props.id}" did not match any acceptable pattern!`);
+
     return ["true", "false"];
   })();
 
   const truthyIndex = props.inverseValues ? 1 : 0;
   const falsyIndex = props.inverseValues ? 0 : 1;
+
   return { truthy: mappedValues[truthyIndex], falsy: mappedValues[falsyIndex] };
 })();
+
 const parsedDefaultPropValue = (() => {
   const boolValues = mapToBoolRepresentation(props.default);
+
   if (boolValues !== null) {
     // Convert truthy to true/false.
     return boolValues.value === boolValues.possibleValues[0];
@@ -98,9 +109,13 @@ const parsedDefaultPropValue = (() => {
 })();
 
 const labelField = props.label ?? `${props.localePrefix}.${props.id}`;
+
 const descField = props.desc ?? `${props.localePrefix}.${props.id}_desc`;
+
 const showDesc = props.desc !== "" || Object.entries(slots).length > 0;
+
 const showDefValue = parsedDefaultPropValue !== null;
+
 const defValue = parsedDefaultPropValue ? "_common.enabled_def_cbox" : "_common.disabled_def_cbox";
 </script>
 

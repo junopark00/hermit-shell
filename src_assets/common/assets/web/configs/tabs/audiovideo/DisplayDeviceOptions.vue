@@ -7,10 +7,13 @@ const props = defineProps({
   platform: String,
   config: Object
 })
+
 const config = ref(props.config)
 
 const REFRESH_RATE_ONLY = "refresh_rate_only"
+
 const RESOLUTION_ONLY = "resolution_only"
+
 const MIXED = "mixed"
 
 function canBeRemapped() {
@@ -23,9 +26,11 @@ function getRemappingType() {
   if (config.value.dd_resolution_option !== "auto") {
     return REFRESH_RATE_ONLY;
   }
+
   if (config.value.dd_refresh_rate_option !== "auto") {
     return RESOLUTION_ONLY;
   }
+
   return MIXED;
 }
 

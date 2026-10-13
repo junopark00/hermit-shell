@@ -45,6 +45,7 @@ class PlatformMessageI18n {
             // there's no message for unix key, return defaultMsg
             return defaultMsg
         }
+
         return message
     }
 }
@@ -76,5 +77,6 @@ export function usePlatformI18n(platform) {
  */
 export function $tp(key, defaultMsg) {
     const pm = usePlatformI18n()
+
     return pm.getMessageUsingPlatform(key, defaultMsg)
 }

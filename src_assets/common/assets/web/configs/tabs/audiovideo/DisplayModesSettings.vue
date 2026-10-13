@@ -7,6 +7,7 @@ const props = defineProps([
   'platform',
   'config',
 ])
+
 const config = ref(props.config)
 </script>
 
