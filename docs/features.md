@@ -406,8 +406,9 @@ client asked for at launch.
   for encoders other than NVIDIA, `401` without the view permission.
 - Captured frames are dropped before the encoder so that one frame is encoded per interval of the
   new rate (60 to 30 encodes every other frame). The newest dropped frame is encoded at its deadline
-  when no newer one comes, so the picture never stays behind the screen. Static content still gets a
-  frame at the minimum frame rate, as before.
+  (plus a quarter interval for capture jitter) when no newer one comes, so the picture never stays
+  behind the screen. A key frame request is not delayed. Static content is still repeated at the
+  minimum frame rate, but never faster than the lowered rate.
 - The encoder's rate control is told the new rate with `nvEncReconfigureEncoder` (no reset, no
   forced key frame) and the VBV buffer is resized to one frame at that rate: at the same average
   bitrate each remaining frame may be larger, so text and fine detail stay sharper. A later

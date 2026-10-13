@@ -6,6 +6,8 @@
 #include "nvenc_base.h"
 
 // standard includes
+#include <algorithm>
+#include <cstdint>
 #include <format>
 
 // local includes
@@ -83,6 +85,19 @@ namespace {
       return "P7";
     }
     return "Unknown";
+  }
+
+  /**
+   * @brief Shell: the VBV buffer size for one frame of `bitrate_bps` at `fps`, plus
+   *        `percentage_increase` percent, computed in 64 bits and clamped to the field's range
+   *        (nvenc_vbv_increase allows 400%, which overflows 32 bits at high bitrates and low rates).
+   */
+  uint32_t vbv_buffer_size(uint64_t bitrate_bps, uint32_t fps, int percentage_increase) {
+    uint64_t size = bitrate_bps / std::max<uint32_t>(fps, 1);
+    if (percentage_increase > 0) {
+      size += size * (uint64_t) percentage_increase / 100;
+    }
+    return (uint32_t) std::min<uint64_t>(size, UINT32_MAX);
   }
 
 }  // namespace
@@ -250,10 +265,7 @@ namespace nvenc {
     enc_config.rcParams.averageBitRate = client_config.bitrate * 1000;
 
     if (get_encoder_cap(NV_ENC_CAPS_SUPPORT_CUSTOM_VBV_BUF_SIZE)) {
-      enc_config.rcParams.vbvBufferSize = client_config.bitrate * 1000 / client_config.framerate;
-      if (config.vbv_percentage_increase > 0) {
-        enc_config.rcParams.vbvBufferSize += enc_config.rcParams.vbvBufferSize * config.vbv_percentage_increase / 100;
-      }
+      enc_config.rcParams.vbvBufferSize = vbv_buffer_size((uint64_t) client_config.bitrate * 1000, (uint32_t) client_config.framerate, config.vbv_percentage_increase);
     }
 
     auto set_h264_hevc_common_format_config = [&](auto &format_config) {
@@ -685,10 +697,7 @@ namespace nvenc {
     NV_ENC_CONFIG enc_config = saved_enc_config;
     enc_config.rcParams.averageBitRate = (uint32_t) kbps * 1000;
     if (saved_custom_vbv) {
-      enc_config.rcParams.vbvBufferSize = (uint32_t) kbps * 1000 / saved_framerate;
-      if (saved_vbv_percentage_increase > 0) {
-        enc_config.rcParams.vbvBufferSize += enc_config.rcParams.vbvBufferSize * saved_vbv_percentage_increase / 100;
-      }
+      enc_config.rcParams.vbvBufferSize = vbv_buffer_size((uint64_t) kbps * 1000, saved_framerate, saved_vbv_percentage_increase);
     }
 
     NV_ENC_RECONFIGURE_PARAMS reconfigure_params = {min_struct_version(NV_ENC_RECONFIGURE_PARAMS_VER)};
@@ -716,10 +725,7 @@ namespace nvenc {
     init_params.frameRateDen = 1;
     NV_ENC_CONFIG enc_config = saved_enc_config;
     if (saved_custom_vbv) {
-      enc_config.rcParams.vbvBufferSize = enc_config.rcParams.averageBitRate / (uint32_t) fps;
-      if (saved_vbv_percentage_increase > 0) {
-        enc_config.rcParams.vbvBufferSize += enc_config.rcParams.vbvBufferSize * saved_vbv_percentage_increase / 100;
-      }
+      enc_config.rcParams.vbvBufferSize = vbv_buffer_size(enc_config.rcParams.averageBitRate, (uint32_t) fps, saved_vbv_percentage_increase);
     }
 
     NV_ENC_RECONFIGURE_PARAMS reconfigure_params = {min_struct_version(NV_ENC_RECONFIGURE_PARAMS_VER)};

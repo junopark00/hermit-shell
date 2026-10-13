@@ -65,14 +65,32 @@ namespace stream::live_fps {
 
   /**
    * @brief When the frame after a kept one is due.
-   * @param next_us When the kept frame was due.
+   * @param next_us When the kept frame was due (0 for the first frame after a change).
    * @param ts_us Capture time of the kept frame.
    * @param interval_us 1,000,000 / the lowered frame rate.
-   * @return One interval after the previous deadline, so jitter does not slow the rate down; but at
-   * least half an interval after the kept frame, so a late frame (or the first one) re-anchors the
-   * schedule instead of letting a burst of frames through.
+   * @return One interval after the previous deadline, so jitter and a capture rate that is not a
+   * multiple of the lowered rate do not slow it down. One interval after the frame itself for the
+   * first frame and for a frame half an interval or more late (after static content): the schedule
+   * re-anchors instead of letting a burst of frames through to catch up.
    */
   constexpr std::int64_t next_deadline(std::int64_t next_us, std::int64_t ts_us, std::int64_t interval_us) {
-    return std::max(next_us + interval_us, ts_us + interval_us / 2);
+    if (next_us == 0 || ts_us - next_us >= interval_us / 2) {
+      return ts_us + interval_us;
+    }
+    return next_us + interval_us;
+  }
+
+  /**
+   * @brief How long the encoder waits for a newer image while it holds a dropped one.
+   * @param next_us When the next frame is due (capture time, steady clock, microseconds).
+   * @param now_us The steady clock now.
+   * @param interval_us 1,000,000 / the lowered frame rate.
+   * @return The time until the deadline plus the keep_frame tolerance (interval / 4): a due frame
+   * reaches the encoder a little after its capture time and must win over the older held image.
+   * Never negative and never more than one interval and a quarter, so a deadline far ahead cannot
+   * stall the picture.
+   */
+  constexpr std::int64_t held_wait_us(std::int64_t next_us, std::int64_t now_us, std::int64_t interval_us) {
+    return std::clamp<std::int64_t>(next_us + interval_us / 4 - now_us, 0, interval_us + interval_us / 4);
   }
 }  // namespace stream::live_fps

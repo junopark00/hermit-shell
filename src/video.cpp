@@ -2199,9 +2199,15 @@ namespace video {
     std::int64_t decimate_next_us = 0;  // steady clock, us: when the next frame is due (0 = now)
     std::shared_ptr<platf::img_t> held_img;
     const auto max_frametime_us = std::chrono::duration_cast<std::chrono::microseconds>(max_frametime).count();
+    auto steady_now_us = []() {
+      return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    };
     auto apply_fps = [&](int fps) {
-      if (!session->set_framerate(fps)) {
-        BOOST_LOG(warning) << "The encoder could not change the frame rate during the stream"sv;
+      // Frames are dropped down to the new rate either way; only the rate control depends on the encoder
+      if (session->set_framerate(fps)) {
+        BOOST_LOG(info) << "Video frame rate changed to ["sv << fps << " fps]"sv;
+      } else {
+        BOOST_LOG(warning) << "The encoder could not change the frame rate during the stream; encoding ["sv << fps << " fps] at the old rate control"sv;
       }
       decimate_interval_us = fps > 0 && fps < config.framerate ? 1000000 / fps : 0;
       decimate_next_us = 0;
@@ -2274,7 +2280,6 @@ namespace video {
         if (auto fps = fps_events->pop(0ms)) {
           apply_fps(*fps);
           live_fps = *fps < config.framerate ? *fps : 0;
-          BOOST_LOG(info) << "Video frame rate changed to ["sv << *fps << " fps]"sv;
         }
       }
 
@@ -2300,16 +2305,19 @@ namespace video {
         std::shared_ptr<platf::img_t> img;
         bool held = false;
         if (held_img) {
-          // Shell: a newer image replaces the held one; without one by its deadline (at once for a
-          // key frame or when the rate went back up), the held image is encoded
-          const auto now_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-          const auto wait_us = requested_idr_frame || decimate_interval_us == 0 ? 0 : std::clamp<std::int64_t>(decimate_next_us - now_us, 0, max_frametime_us);
+          // Shell: a newer image replaces the held one; without one by its deadline plus the
+          // tolerance (at once for a key frame or when the rate went back up), the held image is
+          // encoded. The content changed, so the minimum frame rate does not shorten the wait.
+          const auto wait_us = requested_idr_frame || decimate_interval_us == 0 ? 0 : ::stream::live_fps::held_wait_us(decimate_next_us, steady_now_us(), decimate_interval_us);
           img = images->pop(std::chrono::microseconds(wait_us));
           if (!img) {
             img = std::move(held_img);
             held = true;
           }
           held_img.reset();
+        } else if (decimate_interval_us > 0) {
+          // Shell: static content is repeated no faster than the lowered rate
+          img = images->pop(std::chrono::microseconds(std::max<std::int64_t>(max_frametime_us, decimate_interval_us)));
         } else {
           img = images->pop(max_frametime);
         }
@@ -2331,14 +2339,20 @@ namespace video {
             continue;
           }
 
-          // Shell: live frame rate: hold a frame that is not due yet (a held frame is due now)
+          // Shell: live frame rate: hold a frame that is not due yet (a held frame is due now, and a
+          // key frame is not delayed)
           if (decimate_interval_us > 0) {
             const auto ts_us = std::chrono::duration_cast<std::chrono::microseconds>(current_timestamp.time_since_epoch()).count();
-            if (!held && !::stream::live_fps::keep_frame(ts_us, decimate_next_us, decimate_interval_us / 4)) {
+            const bool due = ::stream::live_fps::keep_frame(ts_us, decimate_next_us, decimate_interval_us / 4);
+            if (!held && !requested_idr_frame && !due) {
               held_img = std::move(img);
               continue;
             }
             decimate_next_us = ::stream::live_fps::next_deadline(decimate_next_us, ts_us, decimate_interval_us);
+            if (held || !due) {
+              // Encoded off its own schedule: the next frame is due at most one interval from now
+              decimate_next_us = std::min(decimate_next_us, steady_now_us() + decimate_interval_us);
+            }
           }
 
           if (session->convert(*img)) {
