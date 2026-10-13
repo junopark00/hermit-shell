@@ -85,7 +85,10 @@
       </template>
       <template v-else>
         <div class="d-flex flex-column align-items-center">
-          <svg class="qr-svg" :viewBox="'0 0 ' + qr.size + ' ' + qr.size" shape-rendering="crispEdges" role="img" :aria-label="$t('pin.qr_image_alt')">
+          <!-- In-DOM template: the browser lowercases attribute names, so the camelCase viewBox needs
+               Vue's .camel modifier (a plain :viewBox becomes "viewbox", which SVG ignores and the
+               code renders at one pixel per module) -->
+          <svg class="qr-svg" :view-box.camel="'0 0 ' + qr.size + ' ' + qr.size" shape-rendering="crispEdges" role="img" :aria-label="$t('pin.qr_image_alt')">
             <rect :width="qr.size" :height="qr.size" fill="#ffffff"></rect>
             <path :d="qr.path" fill="#000000"></path>
           </svg>
