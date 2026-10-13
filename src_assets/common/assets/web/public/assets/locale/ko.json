@@ -504,7 +504,7 @@
     "webhook_secret_not_set": "설정 안 됨",
     "webhook_secret_save": "비밀키 저장",
     "webhook_secret_clear": "지우기",
-    "webhook_secret_saved": "비밀키를 저장했습니다.",
+    "webhook_secret_saved": "비밀키를 저장해 바로 사용합니다. 입력 칸은 보안상 일부러 비웁니다. 비밀키는 다시 보여 주지 않습니다.",
     "webhook_secret_cleared": "비밀키를 지웠습니다.",
     "webhook_secret_error": "비밀키를 저장하지 못했습니다.",
     "webhook_test": "테스트 이벤트 보내기",

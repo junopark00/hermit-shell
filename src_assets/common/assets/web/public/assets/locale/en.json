@@ -504,7 +504,7 @@
     "webhook_secret_not_set": "not set",
     "webhook_secret_save": "Save secret",
     "webhook_secret_clear": "Clear",
-    "webhook_secret_saved": "Secret saved.",
+    "webhook_secret_saved": "Secret saved and in use. The box is emptied on purpose: the secret is never shown again.",
     "webhook_secret_cleared": "Secret removed.",
     "webhook_secret_error": "The secret could not be saved.",
     "webhook_test": "Send test event",
