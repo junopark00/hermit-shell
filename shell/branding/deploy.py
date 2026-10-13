@@ -42,33 +42,37 @@ STATES = {
 }
 
 
-def write(path, data):
-    mode = 'w' if isinstance(data, str) else 'wb'
-    with open(path, mode, **({'encoding': 'utf-8', 'newline': '\n'} if mode == 'w' else {})) as f:
+def write_text(path, text):
+    with open(path, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(text)
+
+
+def write_bytes(path, data):
+    with open(path, 'wb') as f:
         f.write(data)
 
 
 def main():
     # Sources for reference (and the web logo)
-    write(os.path.join(HERE, 'shell.svg'), px.svg(SHELL))
+    write_text(os.path.join(HERE, 'shell.svg'), px.svg(SHELL))
     for state, grid in STATES.items():
-        write(os.path.join(HERE, 'shell-%s.svg' % state), px.svg(grid))
+        write_text(os.path.join(HERE, 'shell-%s.svg' % state), px.svg(grid))
 
     # Exe/installer icon, favicon and web logo
-    write(os.path.join(REPO, 'shell.ico'), px.ico(SHELL))
-    write(os.path.join(IMAGES, 'shell.ico'), px.ico(SHELL))
-    write(os.path.join(IMAGES, 'logo-shell.svg'), px.svg(SHELL))
-    write(os.path.join(IMAGES, 'logo-shell-16.png'), px.png(SHELL, 16))
+    write_bytes(os.path.join(REPO, 'shell.ico'), px.ico(SHELL))
+    write_bytes(os.path.join(IMAGES, 'shell.ico'), px.ico(SHELL))
+    write_text(os.path.join(IMAGES, 'logo-shell.svg'), px.svg(SHELL))
+    write_bytes(os.path.join(IMAGES, 'logo-shell-16.png'), px.png(SHELL, 16))
     # Shown at 24 and 45 CSS px; 96 px keeps whole pixels on high-DPI screens
-    write(os.path.join(IMAGES, 'logo-shell-45.png'), px.png(SHELL, 96))
+    write_bytes(os.path.join(IMAGES, 'logo-shell-45.png'), px.png(SHELL, 96))
 
     # Tray states
     for state, grid in STATES.items():
-        write(os.path.join(IMAGES, 'shell-%s.ico' % state), px.ico(grid))
-        write(os.path.join(IMAGES, 'shell-%s.svg' % state), px.svg(grid))
-        write(os.path.join(IMAGES, 'shell-%s-16.png' % state), px.png(grid, 16))
-        write(os.path.join(IMAGES, 'shell-%s-45.png' % state), px.png(grid, 96))
-        write(os.path.join(IMAGES, 'shell-%s.png' % state), px.png(grid, 1024))
+        write_bytes(os.path.join(IMAGES, 'shell-%s.ico' % state), px.ico(grid))
+        write_text(os.path.join(IMAGES, 'shell-%s.svg' % state), px.svg(grid))
+        write_bytes(os.path.join(IMAGES, 'shell-%s-16.png' % state), px.png(grid, 16))
+        write_bytes(os.path.join(IMAGES, 'shell-%s-45.png' % state), px.png(grid, 96))
+        write_bytes(os.path.join(IMAGES, 'shell-%s.png' % state), px.png(grid, 1024))
     print('Shell icons regenerated')
 
 
