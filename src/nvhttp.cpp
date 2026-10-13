@@ -34,6 +34,7 @@
 #include "file_handler.h"
 #include "globals.h"
 #include "httpcommon.h"
+#include "live_fec.h"
 #include "logging.h"
 #include "network.h"
 #include "nvhttp.h"
@@ -1293,6 +1294,9 @@ namespace nvhttp {
       }
 
       tree.put("root.Permission", std::to_string((uint32_t)named_cert_p->perm));
+      // Shell: live FEC protocol version (docs/features.md "Live FEC changes"): the host has
+      // GET /actions/fec. Paired clients only, like the other live capabilities.
+      tree.put("root.LiveFec", 1);
 
     #ifdef _WIN32
       tree.put("root.VirtualDisplayCapable", true);
@@ -2536,6 +2540,41 @@ namespace nvhttp {
   }
 
   /**
+   * @brief Shell: GET /actions/fec?percent=N sets the FEC percentage of the caller's running stream
+   *        from its next frame (docs/features.md "Live FEC changes"); `percent=default` or `0`
+   *        returns to the configured `fec_percentage`. Replies "percent=<effective>". 400 for a
+   *        value that is not a non-negative integer (values above 100 are clamped to 100), 403 if
+   *        the caller is not streaming.
+   */
+  void setFec(resp_https_t response, req_https_t request) {
+    print_req<ShellHTTPS>(request);
+
+    auto named_cert_p = get_verified_cert(request);
+    if (!(named_cert_p->perm & PERM::_allow_view)) {
+      response->write(SimpleWeb::StatusCode::client_error_unauthorized);
+      response->close_connection_after_response = true;
+      return;
+    }
+
+    auto args = request->parse_query_string();
+    const auto percent = stream::live_fec::parse_percent(get_arg(args, "percent", ""));
+    if (!percent) {
+      response->write(SimpleWeb::StatusCode::client_error_bad_request, "percent must be an integer 0..100 or default"sv);
+      response->close_connection_after_response = true;
+      return;
+    }
+
+    auto session = rtsp_stream::find_session(named_cert_p->uuid);
+    if (!session || stream::session::state(*session) != stream::session::state_e::RUNNING) {
+      response->write(SimpleWeb::StatusCode::client_error_forbidden, "not streaming"sv);
+      response->close_connection_after_response = true;
+      return;
+    }
+
+    response->write("percent=" + std::to_string(stream::session::set_fec_percentage(*session, *percent)) + "\n");
+  }
+
+  /**
    * @brief Shell: GET /actions/cursor, the local cursor (docs/features.md "Local cursor"), for the
    *        caller's own running stream.
    * @details `mode=local&v=1` asks the host to send the pointer shape and visibility over the control
@@ -3338,6 +3377,7 @@ namespace nvhttp {
       getClipboard(resp, req, https_server.io_service);
     };
     https_server.resource["^/actions/bitrate$"]["GET"] = setBitrate;
+    https_server.resource["^/actions/fec$"]["GET"] = setFec;
     https_server.resource["^/actions/cursor$"]["GET"] = cursorAction;
     https_server.resource["^/actions/power$"]["GET"] = power;
     https_server.resource["^/actions/clipboard$"]["POST"] = [&https_server](auto resp, auto req) {

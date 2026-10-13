@@ -312,3 +312,6 @@ written when a session ends, so end the stream after each run.
   files that are left out), settings-only backups and rejected custom paths.
 - `shell/tests/clipboard_image_test.cpp` checks the clipboard image conversion, path checks and the
   file archive encoding with synthetic data (the build command is at the top of the file).
+- `shell/tests/live_fec_test.cpp` checks the `percent` argument of `/actions/fec` (integers, the 100
+  clamp, `default` and `0`, rejected text) and the override-over-configured precedence of the
+  per-frame FEC percentage (the build command is at the top of the file).

@@ -92,6 +92,14 @@ namespace stream {
     int change_bitrate(session_t &session, int client_kbps);
 
     /**
+     * @brief Shell: set or clear the client's live FEC percentage (docs/features.md "Live FEC
+     *        changes"). HTTPS thread; the video thread applies it from its next frame.
+     * @param percent 1..live_fec::max_percent, or 0 to return to the configured fec_percentage.
+     * @return The percentage the next frame uses.
+     */
+    int set_fec_percentage(session_t &session, int percent);
+
+    /**
      * @brief Shell: live figures of a session for the web dashboard, as a JSON object.
      */
     std::string live_info_json(const session_t &session);

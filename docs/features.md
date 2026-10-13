@@ -358,6 +358,37 @@ client, its own stream only).
 - Reply: `bitrate=<encoding kbps>`. `403` when the client is not streaming, `501` for other encoders
   (the client then reconnects with the new bitrate).
 
+## Live FEC changes
+
+A client raises or lowers the forward error correction of its own stream during the stream with
+`GET /actions/fec?percent=N` (paired client with the view permission, its own running stream only).
+Without a request nothing changes: every frame uses `fec_percentage` from the settings, as before.
+
+- `percent`: an integer `1` to `100`. Values above `100` are clamped to `100`; `0` or `default`
+  returns to the configured `fec_percentage`. Anything else (empty, a sign, letters) gets `400`
+  with a plain-text reason.
+- Reply: `percent=<effective>` (plain text), the percentage the next frame uses. `403` (`not
+  streaming`) when the caller has no running stream, `401` without the view permission.
+- The value applies from the next video frame: no encoder reconfiguration, no key frame, no pause.
+  Everything downstream is unchanged: the shard layout per FEC block, the parity minimum per frame
+  and the "no FEC for an oversized frame" fallback.
+- Bandwidth cost: parity packets add `N`% to the video packets, so 50% at 35 Mbps sends about
+  52 Mbps on the wire (the encoder bitrate is not reduced; a client that wants the total constant
+  lowers the bitrate with `/actions/bitrate` as well).
+- Why a client raises it: frame loss with a flat round-trip time (no queueing) is link loss, not
+  congestion. Lowering the bitrate then only costs picture quality; more parity lets the client
+  rebuild the lost packets instead. Loss with a rising round-trip time is congestion and still calls
+  for a lower bitrate.
+- The log notes a change (`FEC for [Tablet] changed to 50% (was 20%)`), at most one line per
+  second per session; a request that leaves the percentage unchanged is not logged. `GET
+  /api/shell/live` session entries carry `fec_percent` (the percentage the next frame uses). The
+  [session record](#session-history) keeps `fec_percent` (the configured value) and adds
+  `fec_percent_max`, the highest percentage the session used.
+- `serverinfo` over HTTPS carries `<LiveFec>1</LiveFec>` (the protocol version). Its presence is the
+  contract: a client sends `/actions/fec` only to a host that advertises it. The plain-HTTP
+  `serverinfo` never carries it. (`/actions/bitrate` has no such field; clients detect it from the
+  reply.)
+
 ## Local cursor
 
 In remote desktop mouse mode the cursor in the video trails the mouse by the capture interval, the
@@ -635,7 +666,7 @@ When the file exceeds 1 MB or 5,000 lines, the older half is dropped (written to
 swapped in). A failure to write is logged and never affects streaming.
 
 ```json
-{"started":"2026-09-30T21:04:11","ended":"2026-09-30T22:15:40","duration_s":4289,"client":"Tablet","client_uuid":"0123-ABCD","app":"Desktop","width":2560,"height":1440,"fps":120,"bitrate_kbps":50000,"codec":"HEVC","hdr":false,"pacing_mbps":150,"pacing_auto":true,"fec_percent":20,"end_reason":"disconnect","encode_budget_max_pct":41,"encode_budget_exceeded":false}
+{"started":"2026-09-30T21:04:11","ended":"2026-09-30T22:15:40","duration_s":4289,"client":"Tablet","client_uuid":"0123-ABCD","app":"Desktop","width":2560,"height":1440,"fps":120,"bitrate_kbps":50000,"codec":"HEVC","hdr":false,"pacing_mbps":150,"pacing_auto":true,"fec_percent":20,"fec_percent_max":20,"cursor":"host","end_reason":"disconnect","encode_budget_max_pct":41,"encode_budget_exceeded":false}
 ```
 
 | Field | Meaning |
@@ -647,7 +678,8 @@ swapped in). A failure to write is logged and never affects streaming.
 | `width`, `height`, `fps` | Resolution and frame rate requested by the client |
 | `bitrate_kbps` | Requested bitrate limited by `max_bitrate` (before the FEC and audio share) |
 | `codec`, `hdr` | H.264, HEVC or AV1, and whether the client asked for 10-bit (HDR) |
-| `pacing_mbps`, `pacing_auto`, `fec_percent` | Packet pacing, whether it was automatic, FEC percentage |
+| `pacing_mbps`, `pacing_auto`, `fec_percent` | Packet pacing, whether it was automatic, configured FEC percentage |
+| `fec_percent_max` | Highest FEC percentage the session used; equals `fec_percent` unless the client raised it (see [Live FEC changes](#live-fec-changes)) |
 | `end_reason` | `disconnect` (the client closed the connection), `timeout` (no answer), `host` (stopped on the host, including a revoked view permission), `app_exit` (the app ended), `client_quit` (the client asked to quit the app); omitted when unknown |
 | `encode_budget_max_pct` | Highest per-second encode time of the session as a percentage of the frame interval (see [Encode time guard](#encode-time-guard)); omitted when no full second was measured |
 | `encode_budget_exceeded` | `true` when the encoder stayed above 65% of the frame interval for 10 seconds at any time; omitted with `encode_budget_max_pct` |
@@ -711,7 +743,7 @@ to clients), followed by the event's fields, and `client_ip` last when the optio
 | `pairing.succeeded` | `client` (device name) | A device finished pairing |
 | `pairing.failed` | `client`, `reason` | A pairing attempt failed: `No PIN was entered in time`, `PIN or certificate check failed` (a wrong PIN), `Too many pairing attempts; try again later`, or the protocol error that ended it. Never the PIN or any key material |
 | `stream.started` | `client`, `client_uuid`, `app`, `width`, `height`, `fps`, `bitrate_kbps`, `codec`, `hdr` | A stream is running (the first part of the session record) |
-| `stream.ended` | The whole [session record](#session-history): `started`, `ended`, `duration_s`, `client`, `client_uuid`, `app`, `width`, `height`, `fps`, `bitrate_kbps`, `codec`, `hdr`, `pacing_mbps`, `pacing_auto`, `fec_percent`, `cursor`, `end_reason`, `encode_budget_*` | A stream ended; sent with the same JSON builder as `session_history.jsonl` |
+| `stream.ended` | The whole [session record](#session-history): `started`, `ended`, `duration_s`, `client`, `client_uuid`, `app`, `width`, `height`, `fps`, `bitrate_kbps`, `codec`, `hdr`, `pacing_mbps`, `pacing_auto`, `fec_percent`, `fec_percent_max`, `cursor`, `end_reason`, `encode_budget_*` | A stream ended; sent with the same JSON builder as `session_history.jsonl` |
 | `app.started` | `app` | An app was launched for a client (also `Remote Input`) |
 | `app.ended` | `app` | The app was closed or ended |
 | `test` | `message` | **Send test event** on the settings page |
@@ -720,7 +752,7 @@ to clients), followed by the event's fields, and `client_ip` last when the optio
 {"event":"pairing.succeeded","time":"2026-10-12T09:50:00Z","host":"GAMING-PC","client":"Tablet"}
 {"event":"pairing.failed","time":"2026-10-12T09:51:30Z","host":"GAMING-PC","client":"Phone","reason":"No PIN was entered in time","client_ip":"192.168.1.20"}
 {"event":"stream.started","time":"2026-10-12T10:00:02Z","host":"GAMING-PC","client":"Tablet","client_uuid":"0123-ABCD","app":"Desktop","width":2560,"height":1440,"fps":120,"bitrate_kbps":50000,"codec":"HEVC","hdr":false}
-{"event":"stream.ended","time":"2026-10-12T11:11:33Z","host":"GAMING-PC","started":"2026-10-12T19:00:02","ended":"2026-10-12T20:11:33","duration_s":4291,"client":"Tablet","client_uuid":"0123-ABCD","app":"Desktop","width":2560,"height":1440,"fps":120,"bitrate_kbps":50000,"codec":"HEVC","hdr":false,"pacing_mbps":150,"pacing_auto":true,"fec_percent":20,"cursor":"host","end_reason":"disconnect"}
+{"event":"stream.ended","time":"2026-10-12T11:11:33Z","host":"GAMING-PC","started":"2026-10-12T19:00:02","ended":"2026-10-12T20:11:33","duration_s":4291,"client":"Tablet","client_uuid":"0123-ABCD","app":"Desktop","width":2560,"height":1440,"fps":120,"bitrate_kbps":50000,"codec":"HEVC","hdr":false,"pacing_mbps":150,"pacing_auto":true,"fec_percent":20,"fec_percent_max":20,"cursor":"host","end_reason":"disconnect"}
 {"event":"app.started","time":"2026-10-12T10:00:01Z","host":"GAMING-PC","app":"Desktop"}
 {"event":"test","time":"2026-10-12T09:49:00Z","host":"GAMING-PC","message":"Test event from the Shell web UI"}
 ```

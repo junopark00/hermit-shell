@@ -33,6 +33,7 @@ extern "C" {
 #include "display_device.h"
 #include "globals.h"
 #include "input.h"
+#include "live_fec.h"
 #include "logging.h"
 #include "network.h"
 #include "platform/common.h"
@@ -444,6 +445,12 @@ namespace stream {
     std::atomic<std::int64_t> last_recovery_ms {0};  // steady clock, ms, of the last of the two
     std::atomic<std::uint64_t> reported_frames_lost {0};  // only from clients that send loss reports
     std::shared_ptr<video::encode_budget_t> encode_budget;  // Shell: encode time vs. frame interval (written by the encoder thread)
+
+    // Shell: live FEC (docs/features.md "Live FEC changes"). Written by the HTTPS thread
+    // (/actions/fec), read by the video thread before every frame.
+    std::atomic<int> fec_percentage_override {0};  // 0 = none: the configured fec_percentage applies
+    std::atomic<int> fec_percent_max {0};  // highest override of the session, for the session record
+    std::atomic<std::int64_t> fec_log_ms {0};  // steady clock, ms, of the last "FEC for [...]" log line
 
     // Shell: local cursor (docs/features.md "Local cursor"). The atomics are written by the HTTPS
     // thread (/actions/cursor); everything else belongs to the control thread, which relays the
@@ -1647,7 +1654,8 @@ namespace stream {
         frame_header.frame_processing_latency = 0;
       }
 
-      auto fecPercentage = config::stream.fec_percentage;
+      // Shell: the client's live override when set, else the configured percentage (live_fec.h)
+      auto fecPercentage = live_fec::effective_percent(session->fec_percentage_override.load(std::memory_order_relaxed), config::stream.fec_percentage);
 
       // Insert space for packet headers
       auto blocksize = session->config.packetsize + MAX_RTP_HEADER_SIZE;
@@ -2341,6 +2349,8 @@ namespace stream {
       entry["pacing_mbps"] = std::atomic_ref<int>(const_cast<int &>(session.config.videoPacingMbps)).load(std::memory_order_relaxed);
       entry["pacing_auto"] = session.config.videoPacingAuto;
       entry["fec_percent"] = config::stream.fec_percentage;
+      // Live FEC: the highest percentage the session used (the configured one without any request)
+      entry["fec_percent_max"] = std::max(config::stream.fec_percentage, session.fec_percent_max.load(std::memory_order_relaxed));
       // Local cursor: "local" when the client drew the cursor itself at any time
       entry["cursor"] = session.cursor.ever_local.load(std::memory_order_relaxed) ? "local" : "host";
       if (const char *reason = session.end_reason.load()) {
@@ -2402,6 +2412,29 @@ namespace stream {
       return encoder_kbps;
     }
 
+    int set_fec_percentage(session_t &session, int percent) {
+      const int configured = config::stream.fec_percentage;
+      const int override_percent = std::clamp(percent, 0, live_fec::max_percent);
+      const int was = live_fec::effective_percent(session.fec_percentage_override.exchange(override_percent, std::memory_order_relaxed), configured);
+      const int now_percent = live_fec::effective_percent(override_percent, configured);
+      if (override_percent > 0) {
+        int max_seen = session.fec_percent_max.load(std::memory_order_relaxed);
+        while (max_seen < override_percent && !session.fec_percent_max.compare_exchange_weak(max_seen, override_percent, std::memory_order_relaxed)) {
+        }
+      }
+      if (now_percent == was) {
+        return now_percent;
+      }
+      // One log line per second per session: a client that steps the percentage up quickly
+      // would otherwise fill the log. The value itself is applied every time.
+      const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+      if (now_ms - session.fec_log_ms.load(std::memory_order_relaxed) >= 1000) {
+        session.fec_log_ms.store(now_ms, std::memory_order_relaxed);
+        BOOST_LOG(info) << "FEC for ["sv << session.device_name << "] changed to "sv << now_percent << "% (was "sv << was << "%)"sv;
+      }
+      return now_percent;
+    }
+
     std::string live_info_json(const session_t &session) {
       static constexpr const char *codecs[] = {"H.264", "HEVC", "AV1"};
       static constexpr const char *states[] = {"stopped", "stopping", "starting", "running"};
@@ -2432,6 +2465,8 @@ namespace stream {
       info["live_bitrate"] = video::live_bitrate_supported();
       info["pacing_mbps"] = std::atomic_ref<int>(const_cast<int &>(session.config.videoPacingMbps)).load(std::memory_order_relaxed);
       info["pacing_auto"] = session.config.videoPacingAuto;
+      // Live FEC: the percentage the next frame uses
+      info["fec_percent"] = live_fec::effective_percent(session.fec_percentage_override.load(std::memory_order_relaxed), config::stream.fec_percentage);
       // Local cursor: whether this client draws the cursor itself, and whether the host still
       // draws it into the video (another session did not ask)
       info["cursor"] = session.cursor.requested.load(std::memory_order_relaxed) ? "local" : "host";
